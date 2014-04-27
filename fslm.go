@@ -260,11 +260,16 @@ func (b *Builder) newState() StateId {
 	// Back-off is initialized to STATE_NIL to signify an "unknown"
 	// back-off.
 	b.states = append(b.states, state{STATE_NIL, 0})
-	b.nexts = append(b.nexts, map[WordId]tgtWeight{})
+	// A large number of states may not have any out-going transition at
+	// all. Delay construction of the map to save space.
+	b.nexts = append(b.nexts, nil)
 	return s
 }
 
 func (b *Builder) setTransition(p StateId, x WordId, q StateId, w Weight) {
+	if b.nexts[p] == nil {
+		b.nexts[p] = map[WordId]tgtWeight{}
+	}
 	b.nexts[p][x] = tgtWeight{q, w}
 }
 
@@ -273,6 +278,9 @@ func (b *Builder) setBackOffWeight(p StateId, bow Weight) {
 }
 
 func (b *Builder) findNextState(p StateId, x WordId) StateId {
+	if b.nexts[p] == nil {
+		b.nexts[p] = map[WordId]tgtWeight{}
+	}
 	qw, ok := b.nexts[p][x]
 	if ok {
 		return qw.Tgt
@@ -298,7 +306,7 @@ func (b *Builder) Dump() *Model {
 }
 
 // link links each state p to the first state q with at least one
-// lexical transition along p' back-off chain.
+// lexical transition along p's back-off chain.
 func (b *Builder) link() {
 	// For safety.
 	if _STATE_EMPTY != 0 || _STATE_START != 1 {

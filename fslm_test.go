@@ -2,6 +2,7 @@ package fslm
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -149,6 +150,18 @@ var sparserFivegramSents = [][]token{
 	{{"a", 0}, {"a", 0}, {"a", 0}, {"a", -1}, {"a", WEIGHT_LOG0}, {"a", WEIGHT_LOG0}, {"a", WEIGHT_LOG0}, {"</s>", 0.1}},
 }
 
+var trickyBackOffLM = []ngram{
+	{"", "</s>", 0.1, 0},
+	{"a b c", "d", -1, -2},
+	{"b c", "e", -4, 1},
+	{"c", "d", 0, -3},
+}
+
+var trickyBackOffSents = [][]token{
+	{{"a", 0}, {"b", 0}, {"c", 0}, {"d", -1}, {"</s>", -2 - 3 + 0.1}},
+	{{"a", 0}, {"b", 0}, {"c", 0}, {"e", -4}, {"</s>", 1 + 0.1}},
+}
+
 func lmTest(lm []ngram, sents [][]token, t *testing.T) {
 	builder := NewBuilder(nil)
 	for _, i := range lm {
@@ -156,6 +169,11 @@ func lmTest(lm []ngram, sents [][]token, t *testing.T) {
 		builder.AddNGram(c, x, w, b)
 	}
 	model := builder.Dump()
+
+	if err := checkModel(model); err != nil {
+		t.Errorf("check model failed with error %v", err)
+	}
+
 	var buf bytes.Buffer
 	model.Graphviz(&buf)
 	t.Log("LM:\n", buf.String())
@@ -176,8 +194,83 @@ func lmTest(lm []ngram, sents [][]token, t *testing.T) {
 	}
 }
 
+func checkModel(m *Model) error {
+	// All states should be reachable from _STATE_START.
+	uf := newUnionFind(len(m.states))
+	for i, s := range m.states {
+		if s.BackOffState != STATE_NIL {
+			uf.Union(i, int(s.BackOffState))
+		}
+	}
+	for px, qw := range m.transitions {
+		if qw.Tgt != STATE_NIL {
+			uf.Union(int(px.Src()), int(qw.Tgt))
+		}
+	}
+	for i := range uf {
+		if uf.Find(i) != uf.Find(int(_STATE_START)) {
+			return errors.New("there are non-reachable states")
+		}
+	}
+	// _STATE_EMPTY backs off to STATE_NIL.
+	if m.states[_STATE_EMPTY].BackOffState != STATE_NIL {
+		return errors.New("wrong back-off for _STATE_EMPTY")
+	}
+	// All other states eventually backs off to _STATE_EMPTY.
+	uf = newUnionFind(len(m.states))
+	for i, s := range m.states {
+		if s.BackOffState != STATE_NIL {
+			uf.Union(int(s.BackOffState), i)
+		}
+	}
+	for i := range uf[_STATE_START:] {
+		if uf.Find(i) != int(_STATE_EMPTY) {
+			return errors.New("there are states that do not back off to empty")
+		}
+	}
+	// Every back-off state has at least one lexical transition.
+	internal := map[StateId]bool{}
+	for px, _ := range m.transitions {
+		internal[px.Src()] = true
+	}
+	for _, s := range m.states[_STATE_START:] {
+		if !internal[s.BackOffState] {
+			return errors.New("backing off to leaf state")
+		}
+	}
+	return nil
+}
+
+type unionFind []int
+
+func newUnionFind(n int) unionFind {
+	uf := make(unionFind, n)
+	for i := range uf {
+		uf[i] = i
+	}
+	return uf
+}
+
+func (uf unionFind) Union(a, b int) int {
+	ra, rb := uf.Find(a), uf.Find(b)
+	uf[rb] = ra
+	return ra
+}
+
+func (uf unionFind) Find(a int) int {
+	r := uf[a]
+	for r != uf[r] {
+		r = uf[r]
+	}
+	for uf[a] != r {
+		uf[a], a = r, uf[a]
+	}
+	return r
+}
+
 func TestLMs(t *testing.T) {
 	lmTest(simpleTrigramLM, simpleTrigramSents, t)
 	lmTest(sparseFivegramLM, sparseFivegramSents, t)
 	lmTest(sparserFivegramLM, sparserFivegramSents, t)
+	lmTest(trickyBackOffLM, trickyBackOffSents, t)
 }

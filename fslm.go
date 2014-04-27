@@ -334,7 +334,7 @@ func (b *Builder) linkTransition(p StateId, x WordId, q StateId) (StateId, Weigh
 		pBack := b.states[p].BackOffState
 		qwBack, ok := b.nexts[pBack][x]
 		for !ok && pBack != _STATE_EMPTY {
-			pBack := b.states[pBack].BackOffState
+			pBack = b.states[pBack].BackOffState
 			qwBack, ok = b.nexts[pBack][x]
 		}
 		if ok {
@@ -370,4 +370,19 @@ func (b *Builder) move() *Model {
 		}
 	}
 	return &m
+}
+
+func (b *Builder) Graphviz(w io.Writer) {
+	fmt.Fprintln(w, "digraph {")
+	fmt.Fprintln(w, "  // lexical transitions")
+	for p, xqw := range b.nexts {
+		for x, qw := range xqw {
+			fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, qw.Tgt, fmt.Sprintf("%s : %g", b.vocab.StringOf(x), qw.Weight))
+		}
+	}
+	fmt.Fprintln(w, "  // back-off transitions")
+	for i, s := range b.states {
+		fmt.Fprintf(w, "  %d -> %d [label=%q,style=dashed]\n", i, s.BackOffState, fmt.Sprintf("%g", s.BackOffWeight))
+	}
+	fmt.Fprintln(w, "}")
 }

@@ -1,9 +1,12 @@
 package fslm
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math"
+	"strconv"
 )
 
 type WordId uint32
@@ -85,9 +88,28 @@ const (
 
 type Weight float32
 
-const (
-	WEIGHT_LOG0 Weight = -99 // Replacement of -inf following the convention of SRILM.
+func (w *Weight) String() string {
+	return strconv.FormatFloat(float64(*w), 'g', -1, 32)
+}
+
+func (w *Weight) Set(s string) error {
+	f, err := strconv.ParseFloat(s, 32)
+	if err == nil {
+		*w = Weight(f)
+	}
+	return err
+}
+
+// I seriously do not care about any platform that supports Go but
+// does not support IEEE 754 infinity.
+var (
+	WEIGHT_LOG0 = Weight(math.Inf(-1))
+	textLog0    = Weight(-99)
 )
+
+func init() {
+	flag.Var(&textLog0, "fslm.log0", "treat weight <= this as log(0)")
+}
 
 type state struct {
 	BackOffState  StateId
@@ -237,6 +259,12 @@ func NewBuilder(vocab *Vocab) *Builder {
 // or this will panic. For other problematic input, warnings will be
 // logged.
 func (b *Builder) AddNGram(context []string, word string, weight Weight, backOff Weight) {
+	if weight <= textLog0 {
+		weight = WEIGHT_LOG0
+	}
+	if backOff <= textLog0 {
+		backOff = WEIGHT_LOG0
+	}
 	if len(context) > 0 && word == b.vocab.BOS && weight > -10 {
 		log.Printf("there is a non-unigram ending in %q with weight %g (such n-gram should have -inf weight or not occur in the LM)", word, weight)
 	}
@@ -367,16 +395,51 @@ func (b *Builder) linkTransition(p StateId, x WordId, q StateId) (StateId, Weigh
 }
 
 func (b *Builder) move() *Model {
+	log.Printf("before pruning: %d states", len(b.states))
 	var m Model
 	m.Vocab, b.vocab = b.vocab, nil
-	m.states, b.states = b.states, nil
+	// Compute mapping from old StateId to pruned StateId.
+	oldToNew := make([]StateId, len(b.states))
+	// _STATE_START and _STATE_EMPTY must be unchanged.
+	oldToNew[_STATE_START] = _STATE_START
+	nextId := StateId(_STATE_START + 1)
+	for i, n := range b.nexts[_STATE_START+1:] {
+		o := _STATE_START + 1 + StateId(i)
+		if len(n) > 0 {
+			oldToNew[o] = nextId
+			nextId++
+		} else {
+			oldToNew[o] = STATE_NIL
+		}
+	}
+	// Copy transitions and apply the mapping.
 	m.transitions = map[srcWord]tgtWeight{}
 	for i, n := range b.nexts {
 		b.nexts[i] = nil // Allow GC to reclaim this map after this iteration.
 		for x, qw := range n {
-			m.transitions[newSrcWord(StateId(i), x)] = tgtWeight{qw.Tgt, qw.Weight}
+			q, w := qw.Tgt, qw.Weight
+			if q != STATE_NIL {
+				q = oldToNew[q]
+				if q == STATE_NIL {
+					s := &b.states[qw.Tgt]
+					q = oldToNew[s.BackOffState]
+					w += s.BackOffWeight
+				}
+			}
+			m.transitions[newSrcWord(oldToNew[i], x)] = tgtWeight{q, w}
 		}
 	}
+	// Prune states.
+	m.states, b.states = b.states, nil
+	for o, s := range m.states[_STATE_START:] {
+		n := oldToNew[StateId(o)+_STATE_START]
+		if n != STATE_NIL {
+			s.BackOffState = oldToNew[s.BackOffState]
+			m.states[n] = s
+		}
+	}
+	m.states = m.states[:nextId]
+	log.Printf("after pruning: %d states", nextId)
 	return &m
 }
 

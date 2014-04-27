@@ -151,6 +151,7 @@ var sparserFivegramSents = [][]token{
 }
 
 var trickyBackOffLM = []ngram{
+	{"", "<s>", 0, -1},
 	{"", "</s>", 0.1, 0},
 	{"a b c", "d", -1, -2},
 	{"b c", "e", -4, 1},
@@ -158,9 +159,12 @@ var trickyBackOffLM = []ngram{
 }
 
 var trickyBackOffSents = [][]token{
-	{{"a", 0}, {"b", 0}, {"c", 0}, {"d", -1}, {"</s>", -2 - 3 + 0.1}},
-	{{"a", 0}, {"b", 0}, {"c", 0}, {"e", -4}, {"</s>", 1 + 0.1}},
+	{{"</s>", -1 + 0.1}},
+	{{"a", -1}, {"b", 0}, {"c", 0}, {"d", -1}, {"</s>", -2 - 3 + 0.1}},
+	{{"a", -1}, {"b", 0}, {"c", 0}, {"e", -4}, {"</s>", 1 + 0.1}},
 }
+
+const floatTol = 1e-7
 
 func lmTest(lm []ngram, sents [][]token, t *testing.T) {
 	builder := NewBuilder(nil)
@@ -170,26 +174,33 @@ func lmTest(lm []ngram, sents [][]token, t *testing.T) {
 	}
 	model := builder.Dump()
 
-	if err := checkModel(model); err != nil {
-		t.Errorf("check model failed with error %v", err)
-	}
-
 	var buf bytes.Buffer
 	model.Graphviz(&buf)
 	t.Log("LM:\n", buf.String())
 
+	if err := checkModel(model); err != nil {
+		t.Errorf("check model failed with error %v", err)
+	}
+
 	for _, i := range sents {
+		var (
+			w0, w1 Weight
+			ws     []Weight
+		)
 		p := model.Start()
-		w := Weight(99)
-		for j, x := range i {
+		for _, x := range i {
+			var w Weight
 			if x.Word != "</s>" {
 				p, w = model.NextS(p, x.Word)
 			} else {
 				w = model.Final(p)
 			}
-			if w != x.Weight {
-				t.Errorf("expected weight = %g; got %g\nsent: %v\nword: %d@%v", x.Weight, w, i, j, x)
-			}
+			w0 += x.Weight
+			w1 += w
+			ws = append(ws, w)
+		}
+		if w0-w1 >= floatTol || w1-w0 >= floatTol {
+			t.Errorf("expected total weight = %g; got %g\nsent: %v\nweights: %v", w0, w1, i, ws)
 		}
 	}
 }
@@ -237,6 +248,10 @@ func checkModel(m *Model) error {
 		if !internal[s.BackOffState] {
 			return errors.New("backing off to leaf state")
 		}
+	}
+	delete(internal, _STATE_START)
+	if len(internal)+1 != len(m.states) {
+		return errors.New("there are non-start leaf states")
 	}
 	return nil
 }

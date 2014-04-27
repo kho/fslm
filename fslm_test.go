@@ -172,11 +172,14 @@ func lmTest(lm []ngram, sents [][]token, t *testing.T) {
 		c, x, w, b := i.Params()
 		builder.AddNGram(c, x, w, b)
 	}
+	var buf bytes.Buffer
+	buf.WriteString("builder LM:\n")
+	builder.Graphviz(&buf)
 	model := builder.Dump()
 
-	var buf bytes.Buffer
+	buf.WriteString("model LM:\n")
 	model.Graphviz(&buf)
-	t.Log("LM:\n", buf.String())
+	t.Log(buf.String())
 
 	if err := checkModel(model); err != nil {
 		t.Errorf("check model failed with error %v", err)

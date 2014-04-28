@@ -185,6 +185,10 @@ func lmTest(lm []ngram, sents [][]token, t *testing.T) {
 		t.Errorf("check model failed with error %v", err)
 	}
 
+	sentTest(model, sents, t)
+}
+
+func sentTest(model *Model, sents [][]token, t *testing.T) {
 	for _, i := range sents {
 		var (
 			w0, w1 Weight

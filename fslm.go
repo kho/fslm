@@ -88,6 +88,8 @@ const (
 
 type Weight float32
 
+const WEIGHT_SIZE = 32
+
 func (w *Weight) String() string {
 	return strconv.FormatFloat(float64(*w), 'g', -1, 32)
 }

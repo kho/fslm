@@ -2,9 +2,11 @@ package fslm
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/kho/easy"
 	"github.com/kho/stream"
 	"io"
+	"log"
 	"strconv"
 )
 
@@ -80,6 +82,7 @@ func newNgramWeights(n int, b *Builder) *ngramWeights {
 func (it *ngramWeights) Final() error { return nil }
 func (it *ngramWeights) Next(line []byte) (stream.Iteratee, bool, error) {
 	if line[0] == '\\' {
+		log.Printf("%d-gram done", it.n)
 		return nil, false, nil
 	}
 	if err := it.setParts(line); err != nil {
@@ -93,10 +96,10 @@ func (it *ngramWeights) setParts(line []byte) error {
 	// p
 	x, xs := tokenSplit(line)
 	if x == "" {
-		goto fail
+		return stream.ErrExpect("log-probability")
 	}
 	if f, err := strconv.ParseFloat(x, WEIGHT_SIZE); err != nil {
-		goto fail
+		return err
 	} else {
 		it.p = Weight(f)
 	}
@@ -104,14 +107,14 @@ func (it *ngramWeights) setParts(line []byte) error {
 	for i := 1; i < it.n; i++ {
 		x, xs = tokenSplit(xs)
 		if x == "" {
-			goto fail
+			return stream.ErrExpect(fmt.Sprintf("%d context word(s)", it.n))
 		}
 		it.context[i-1] = x
 	}
 	// word
 	x, xs = tokenSplit(xs)
 	if x == "" {
-		goto fail
+		return stream.ErrExpect("word")
 	}
 	it.word = x
 	// bow
@@ -121,20 +124,18 @@ func (it *ngramWeights) setParts(line []byte) error {
 	} else if f, err := strconv.ParseFloat(x, WEIGHT_SIZE); err == nil {
 		it.bow = Weight(f)
 	} else {
-		goto fail
+		return err
 	}
 	// no extra stuff
 	if len(xs) != 0 {
-		goto fail
+		return stream.ErrExpect("end of line")
 	}
 	return nil
-fail:
-	return stream.ErrExpect(`n-gram entry like "p    w1 ... wn    [bow]"`)
 }
 
 func isSpace(b byte) bool {
 	switch b {
-	case '\t', '\v', '\f', '\r', ' ', '\x85', '\xa0':
+	case '\t', '\v', '\f', '\r', ' ':
 		return true
 	default:
 		return false

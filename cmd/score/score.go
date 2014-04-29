@@ -87,6 +87,6 @@ func Score(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
 	}
 	w := model.Final(p)
 	total += w
-	// fmt.Printf("</s>\t%g\t%g\n", w, total)
+	// fmt.Printf("</s>\t%g\t%g\n\n", w, total)
 	return
 }

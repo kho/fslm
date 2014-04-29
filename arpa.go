@@ -1,32 +1,16 @@
 package fslm
 
+// ARPA file parsing routine using iteratees.
+
 import (
 	"bytes"
 	"fmt"
-	"github.com/kho/easy"
 	"github.com/kho/stream"
-	"io"
 	"log"
 	"strconv"
 )
 
-func FromARPA(in io.Reader) (*Model, error) {
-	builder := NewBuilder(nil)
-	if err := stream.Run(stream.EnumRead(in, lineSplit), arpaTop{builder}); err != nil {
-		return nil, err
-	}
-	return builder.Dump(), nil
-}
-
-func FromARPAFile(path string) (*Model, error) {
-	in, err := easy.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer in.Close()
-	return FromARPA(in)
-}
-
+// arpaTop is the top-level iteratee for parsing a complete ARPA file.
 type arpaTop struct {
 	builder *Builder
 }
@@ -35,22 +19,25 @@ func (it arpaTop) Final() error { return stream.Match(`\data\`).Final() }
 func (it arpaTop) Next(line []byte) (stream.Iteratee, bool, error) {
 	return stream.Seq{
 		stream.Match(`\data\`),
-		skipNGramCounts{},
+		skipNgramCounts{},
 		stream.Star{ngramSection{it.builder}},
 		stream.Match(`\end\`),
 		stream.EOF}, false, nil
 }
 
-type skipNGramCounts struct{}
+// skipNgramCounts skips the n-gram-count section.
+type skipNgramCounts struct{}
 
-func (_ skipNGramCounts) Final() error { return nil }
-func (it skipNGramCounts) Next(line []byte) (stream.Iteratee, bool, error) {
+func (_ skipNgramCounts) Final() error { return nil }
+func (it skipNgramCounts) Next(line []byte) (stream.Iteratee, bool, error) {
 	if line[0] == '\\' {
 		return nil, false, nil
 	}
 	return it, true, nil
 }
 
+// ngramSection goes through one n-gram section and add all the n-gram
+// entries to the builder.
 type ngramSection struct {
 	builder *Builder
 }
@@ -64,23 +51,28 @@ func (it ngramSection) Next(line []byte) (stream.Iteratee, bool, error) {
 	if err != nil || n <= 0 {
 		return nil, false, stream.ErrExpect(`positive integer in section header "\N-grams:"`)
 	}
-	return newNgramWeights(n, it.builder), true, nil
+	return newNgramEntries(n, it.builder), true, nil
 }
 
-type ngramWeights struct {
+// ngramEntries scans 0 or more n-gram entries of the given order and
+// add them to the builder.
+type ngramEntries struct {
 	builder *Builder
 	n       int
+	// These are for avoiding repeated space allocation.
 	p, bow  Weight
 	context []string
 	word    string
 }
 
-func newNgramWeights(n int, b *Builder) *ngramWeights {
-	return &ngramWeights{b, n, 0, 0, make([]string, n-1), ""}
+// newNgramEntries constructs a new ngramEntries with properly
+// initialized stub data.
+func newNgramEntries(n int, b *Builder) *ngramEntries {
+	return &ngramEntries{b, n, 0, 0, make([]string, n-1), ""}
 }
 
-func (it *ngramWeights) Final() error { return nil }
-func (it *ngramWeights) Next(line []byte) (stream.Iteratee, bool, error) {
+func (it *ngramEntries) Final() error { return nil }
+func (it *ngramEntries) Next(line []byte) (stream.Iteratee, bool, error) {
 	if line[0] == '\\' {
 		log.Printf("%d-gram done", it.n)
 		return nil, false, nil
@@ -88,11 +80,11 @@ func (it *ngramWeights) Next(line []byte) (stream.Iteratee, bool, error) {
 	if err := it.setParts(line); err != nil {
 		return nil, false, err
 	}
-	it.builder.AddNGram(it.context, it.word, it.p, it.bow)
+	it.builder.AddNgram(it.context, it.word, it.p, it.bow)
 	return it, true, nil
 }
 
-func (it *ngramWeights) setParts(line []byte) error {
+func (it *ngramEntries) setParts(line []byte) error {
 	// p
 	x, xs := tokenSplit(line)
 	if x == "" {
@@ -132,6 +124,8 @@ func (it *ngramWeights) setParts(line []byte) error {
 	}
 	return nil
 }
+
+// Low-level lexer code.
 
 func isSpace(b byte) bool {
 	switch b {

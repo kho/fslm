@@ -90,13 +90,16 @@ func Score(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
 		if w == fslm.WEIGHT_LOG0 {
 			w = unkScore
 			numOOVs++
+			fmt.Printf("<unk>")
+		} else {
+			fmt.Printf("%q", x)
 		}
 		total += w
-		fmt.Printf("%q\t%g\t%g", x, w, total)
+		fmt.Printf("\t%g\t%g\n", w, total)
 	}
 	w := model.Final(p)
 	total += w
-	fmt.Printf("</s>\t%g\t%g\n", w, total)
+	fmt.Printf("</s>\t%g\t%g\n\n", w, total)
 	return
 }
 

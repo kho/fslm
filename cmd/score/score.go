@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"github.com/golang/glog"
 	"github.com/kho/easy"
 	"github.com/kho/fslm"
-	"log"
 	"math"
 	"os"
 	"strings"
@@ -19,15 +19,15 @@ var (
 
 func init() {
 	flag.Var(&unkScore, "unk", "score for <unk>")
-	flag.StringVar(&format, "format", "arpa", "arpa or gob")
+	flag.StringVar(&format, "format", "gob", "arpa or gob")
 }
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	var args struct {
 		Model string `name:"model" usage:"LM file"`
 	}
 	easy.ParseFlagsAndArgs(&args)
+	flag.Set("logtostderr", "true")
 
 	var (
 		model *fslm.Model
@@ -39,13 +39,15 @@ func main() {
 	case "gob":
 		model, err = fslm.FromGobFile(args.Model)
 	default:
-		log.Fatalf("unknown format %q", format)
+		glog.Fatalf("unknown format %q", format)
 	}
 	if err != nil {
-		log.Fatal(err)
+		glog.Fatal(err)
 	}
 	numStates, numTransitions, numWords := model.Size()
-	log.Printf("loaded LM with %d states, %d transitions, and %d words", numStates, numTransitions, numWords)
+	if glog.V(1) {
+		glog.Infof("loaded LM with %d states, %d transitions, and %d words", numStates, numTransitions, numWords)
+	}
 
 	in := bufio.NewScanner(os.Stdin)
 
@@ -59,7 +61,7 @@ func main() {
 		numOOVs += o
 	}
 	if err := in.Err(); err != nil {
-		log.Fatal(err)
+		glog.Fatal(err)
 	}
 
 	if numWords > 0 {
@@ -78,15 +80,16 @@ func Score(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
 		if w == fslm.WEIGHT_LOG0 {
 			w = unkScore
 			numOOVs++
-			// fmt.Print("<unk>")
-		} else {
-			// fmt.Printf("%q", x)
 		}
 		total += w
-		// fmt.Printf("\t%g\t%g\t%x\n", w, total, p)
+		if glog.V(2) {
+			glog.Infof("%q\t%g\t%g", x, w, total)
+		}
 	}
 	w := model.Final(p)
 	total += w
-	// fmt.Printf("</s>\t%g\t%g\n\n", w, total)
+	if glog.V(2) {
+		glog.Infof("</s>\t%g\t%g\n", w, total)
+	}
 	return
 }

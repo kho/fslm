@@ -5,8 +5,8 @@ package fslm
 import (
 	"bytes"
 	"fmt"
+	"github.com/golang/glog"
 	"github.com/kho/stream"
-	"log"
 	"strconv"
 )
 
@@ -74,7 +74,9 @@ func newNgramEntries(n int, b *Builder) *ngramEntries {
 func (it *ngramEntries) Final() error { return nil }
 func (it *ngramEntries) Next(line []byte) (stream.Iteratee, bool, error) {
 	if line[0] == '\\' {
-		log.Printf("%d-gram done", it.n)
+		if glog.V(1) {
+			glog.Infof("finished reading %d-grams", it.n)
+		}
 		return nil, false, nil
 	}
 	if err := it.setParts(line); err != nil {

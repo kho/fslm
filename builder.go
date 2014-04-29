@@ -2,8 +2,8 @@ package fslm
 
 import (
 	"fmt"
+	"github.com/golang/glog"
 	"io"
-	"log"
 )
 
 // Builder builds a Model from n-grams (e.g. estimated by SRILM). Must
@@ -46,10 +46,10 @@ func (b *Builder) AddNgram(context []string, word string, weight Weight, backOff
 		backOff = WEIGHT_LOG0
 	}
 	if len(context) > 0 && word == b.vocab.BOS && weight > -10 {
-		log.Printf("there is a non-unigram ending in %q with weight %g (such n-gram should have -inf weight or not occur in the LM)", word, weight)
+		glog.Warningf("there is a non-unigram ending in %q with weight %g (such n-gram should have -inf weight or not occur in the LM)", word, weight)
 	}
 	if word == b.vocab.EOS && backOff != 0 {
-		log.Printf("non-zero back-off %g for a n-gram ending in %q", backOff, word)
+		glog.Warningf("non-zero back-off %g for a n-gram ending in %q", backOff, word)
 	}
 
 	p := b.findState(_STATE_EMPTY, context)
@@ -177,7 +177,9 @@ func (b *Builder) linkTransition(p StateId, x WordId, q StateId) (StateId, Weigh
 // pruneMove prunes the state space for immediately backing-off states
 // and moves the contents to a real Model.
 func (b *Builder) pruneMove() *Model {
-	log.Printf("before pruning: %d states", len(b.states))
+	if glog.V(1) {
+		glog.Infof("before pruning: %d states", len(b.states))
+	}
 	var m Model
 	m.Vocab, b.vocab = b.vocab, nil
 	// Compute mapping from old StateId to pruned StateId.
@@ -221,7 +223,9 @@ func (b *Builder) pruneMove() *Model {
 		}
 	}
 	m.states = m.states[:nextId]
-	log.Printf("after pruning: %d states", nextId)
+	if glog.V(1) {
+		glog.Infof("after pruning: %d states", nextId)
+	}
 	return &m
 }
 

@@ -51,13 +51,24 @@ func main() {
 	in := bufio.NewScanner(os.Stdin)
 
 	score, numWords, numSents, numOOVs := fslm.Weight(0), 0, 0, 0
-	for in.Scan() {
-		sent := strings.Fields(in.Text())
-		s, o := Score(model, sent)
-		score += s
-		numWords += len(sent)
-		numSents++
-		numOOVs += o
+	if glog.V(1) {
+		for in.Scan() {
+			sent := strings.Fields(in.Text())
+			s, o := Score(model, sent)
+			score += s
+			numWords += len(sent)
+			numSents++
+			numOOVs += o
+		}
+	} else {
+		for in.Scan() {
+			sent := strings.Fields(in.Text())
+			s, o := SilentScore(model, sent)
+			score += s
+			numWords += len(sent)
+			numSents++
+			numOOVs += o
+		}
 	}
 	if err := in.Err(); err != nil {
 		glog.Fatal(err)
@@ -81,14 +92,26 @@ func Score(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
 			numOOVs++
 		}
 		total += w
-		if glog.V(2) {
-			glog.Infof("%q\t%g\t%g", x, w, total)
-		}
+		fmt.Printf("%q\t%g\t%g", x, w, total)
 	}
 	w := model.Final(p)
 	total += w
-	if glog.V(2) {
-		glog.Infof("</s>\t%g\t%g\n", w, total)
+	fmt.Printf("</s>\t%g\t%g\n", w, total)
+	return
+}
+
+func SilentScore(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
+	p := model.Start()
+	for _, x := range sent {
+		var w fslm.Weight
+		p, w = model.NextS(p, x)
+		if w == fslm.WEIGHT_LOG0 {
+			w = unkScore
+			numOOVs++
+		}
+		total += w
 	}
+	w := model.Final(p)
+	total += w
 	return
 }

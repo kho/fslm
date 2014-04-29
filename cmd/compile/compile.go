@@ -2,15 +2,14 @@ package main
 
 import (
 	"encoding/gob"
-	"flag"
 	"github.com/golang/glog"
+	"github.com/kho/easy"
 	"github.com/kho/fslm"
 	"os"
 )
 
 func main() {
-	flag.Parse()
-	flag.Set("logtostderr", "true")
+	easy.ParseFlagsAndArgs(nil)
 
 	model, err := fslm.FromARPA(os.Stdin)
 	if err != nil {

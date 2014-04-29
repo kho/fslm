@@ -27,7 +27,6 @@ func main() {
 		Model string `name:"model" usage:"LM file"`
 	}
 	easy.ParseFlagsAndArgs(&args)
-	flag.Set("logtostderr", "true")
 
 	var (
 		model *fslm.Model

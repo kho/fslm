@@ -1,8 +1,11 @@
 package fslm
 
 import (
+	"bytes"
+	"encoding/gob"
 	"flag"
 	"fmt"
+	"github.com/kho/easy"
 	"io"
 	"log"
 	"math"
@@ -78,6 +81,47 @@ func (v *Vocab) IdOrAdd(s string) WordId {
 		v.str2id[s] = i
 	}
 	return i
+}
+
+func (v *Vocab) MarshalBinary() (data []byte, err error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err = enc.Encode(v.Unk); err != nil {
+		return
+	}
+	if err = enc.Encode(v.BOS); err != nil {
+		return
+	}
+	if err = enc.Encode(v.EOS); err != nil {
+		return
+	}
+	if err = enc.Encode(v.id2str); err != nil {
+		return
+	}
+	if err = enc.Encode(v.str2id); err != nil {
+		return
+	}
+	return buf.Bytes(), nil
+}
+
+func (v *Vocab) UnmarshalBinary(data []byte) (err error) {
+	dec := gob.NewDecoder(bytes.NewReader(data))
+	if err = dec.Decode(&v.Unk); err != nil {
+		return
+	}
+	if err = dec.Decode(&v.BOS); err != nil {
+		return
+	}
+	if err = dec.Decode(&v.EOS); err != nil {
+		return
+	}
+	if err = dec.Decode(&v.id2str); err != nil {
+		return
+	}
+	if err = dec.Decode(&v.str2id); err != nil {
+		return
+	}
+	return nil
 }
 
 type StateId uint32
@@ -168,6 +212,10 @@ const (
 	_STATE_START StateId = 1
 )
 
+func (m *Model) Size() (numStates, numTransitions, numWords int) {
+	return len(m.states), len(m.transitions), int(m.Vocab.Bound())
+}
+
 // Start returns the start state, i.e. the state with context
 // [WORD_BOS]. The user should never explicitly querying WORD_BOS,
 // which will be treated as an OOV and breaks the context.
@@ -228,6 +276,35 @@ func (m *Model) Graphviz(w io.Writer) {
 		fmt.Fprintf(w, "  %d -> %d [label=%q,style=dashed]\n", i, s.BackOffState, fmt.Sprintf("%g", s.BackOffWeight))
 	}
 	fmt.Fprintln(w, "}")
+}
+
+func (m *Model) MarshalBinary() (data []byte, err error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err = enc.Encode(m.Vocab); err != nil {
+		return
+	}
+	if err = enc.Encode(m.states); err != nil {
+		return
+	}
+	if err = enc.Encode(m.transitions); err != nil {
+		return
+	}
+	return buf.Bytes(), nil
+}
+
+func (m *Model) UnmarshalBinary(data []byte) (err error) {
+	dec := gob.NewDecoder(bytes.NewReader(data))
+	if err = dec.Decode(&m.Vocab); err != nil {
+		return
+	}
+	if err = dec.Decode(&m.states); err != nil {
+		return
+	}
+	if err = dec.Decode(&m.transitions); err != nil {
+		return
+	}
+	return nil
 }
 
 // Builder builds a Model from n-grams (e.g. estimated by SRILM). Must
@@ -458,4 +535,21 @@ func (b *Builder) Graphviz(w io.Writer) {
 		fmt.Fprintf(w, "  %d -> %d [label=%q,style=dashed]\n", i, s.BackOffState, fmt.Sprintf("%g", s.BackOffWeight))
 	}
 	fmt.Fprintln(w, "}")
+}
+
+func FromGob(in io.Reader) (*Model, error) {
+	var m Model
+	if err := gob.NewDecoder(in).Decode(&m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+func FromGobFile(path string) (*Model, error) {
+	in, err := easy.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer in.Close()
+	return FromGob(in)
 }

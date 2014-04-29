@@ -2,7 +2,6 @@ package fslm
 
 import (
 	"bufio"
-	"log"
 	"path"
 	"reflect"
 	"strings"
@@ -10,7 +9,6 @@ import (
 )
 
 func TestFromARPAFile(t *testing.T) {
-	log.Print("hahaha ", textLog0)
 	for _, i := range []string{"simple.3gram.arpa", "messy.3gram.arpa.gz"} {
 		model, err := FromARPAFile(path.Join("testdata", i))
 		if err != nil {

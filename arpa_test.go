@@ -90,7 +90,7 @@ func Test_ngramWeights_setParts(t *testing.T) {
 		{N: 2, Line: "ab cd ef", Err: true},
 		{N: 2, Line: "-1 ab cd ef", Err: true},
 	} {
-		nw := newNgramWeights(i.N, nil)
+		nw := newNgramEntries(i.N, nil)
 		// Mess up the state before setting.
 		nw.p = 9999
 		nw.bow = 9999

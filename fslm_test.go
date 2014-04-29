@@ -98,7 +98,7 @@ func lmTest(lm []ngram, sents [][]token, t *testing.T) {
 	builder := NewBuilder(nil)
 	for _, i := range lm {
 		c, x, w, b := i.Params()
-		builder.AddNGram(c, x, w, b)
+		builder.AddNgram(c, x, w, b)
 	}
 	var buf bytes.Buffer
 	buf.WriteString("builder LM:\n")

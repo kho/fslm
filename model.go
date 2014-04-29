@@ -27,12 +27,12 @@ type Model struct {
 	//
 	// (2) A final transition that consumes WORD_EOS. This gives the
 	// final weight but always leads to an undefined state.
-	transitions transitionMap
+	transitions *Map
 }
 
 // Size returns the size of the model in several aspects.
 func (m *Model) Size() (numStates, numTransitions, vocabSize int) {
-	return len(m.states), len(m.transitions), int(m.Vocab.Bound())
+	return len(m.states), m.transitions.Size(), int(m.Vocab.Bound())
 }
 
 // Start returns the start state, i.e. the state with context
@@ -59,14 +59,14 @@ func (m *Model) NextI(p StateId, i WordId) (q StateId, w Weight) {
 	// }
 
 	// Try backing off until we find the n-gram or hit empty state.
-	next, ok := m.transitions[newSrcWord(p, i)]
-	for !ok && p != _STATE_EMPTY {
+	next := m.transitions.Find(Key(newSrcWord(p, i)))
+	for next == nil && p != _STATE_EMPTY {
 		s := m.states[p]
 		p = s.BackOffState
 		w += s.BackOffWeight
-		next, ok = m.transitions[newSrcWord(p, i)]
+		next = m.transitions.Find(Key(newSrcWord(p, i)))
 	}
-	if ok {
+	if next != nil {
 		q = next.Tgt
 		w += next.Weight
 	} else {
@@ -96,7 +96,8 @@ func (m *Model) Final(p StateId) Weight {
 func (m *Model) Graphviz(w io.Writer) {
 	fmt.Fprintln(w, "digraph {")
 	fmt.Fprintln(w, "  // lexical transitions")
-	for px, qw := range m.transitions {
+	for e := range m.transitions.Range() {
+		px, qw := srcWord(e.Key), tgtWeight(e.Value)
 		fmt.Fprintf(w, "  %d -> %d [label=%q]\n", px.Src(), qw.Tgt, fmt.Sprintf("%s : %g", m.Vocab.StringOf(px.Word()), qw.Weight))
 	}
 	fmt.Fprintln(w, "  // back-off transitions")
@@ -164,6 +165,3 @@ type tgtWeight struct {
 	Tgt    StateId
 	Weight Weight
 }
-
-// TODO: implement probing instead of using stdlib map.
-type transitionMap map[srcWord]tgtWeight

@@ -95,11 +95,12 @@ var trickyBackOffSents = [][]token{
 const floatTol = 1e-7
 
 func lmTest(lm []ngram, sents [][]token, t *testing.T) {
-	builder := NewBuilder(nil)
+	builder := NewBuilder(0, nil)
 	for _, i := range lm {
 		c, x, w, b := i.Params()
 		builder.AddNgram(c, x, w, b)
 	}
+
 	var buf bytes.Buffer
 	buf.WriteString("builder LM:\n")
 	builder.Graphviz(&buf)
@@ -114,6 +115,16 @@ func lmTest(lm []ngram, sents [][]token, t *testing.T) {
 	}
 
 	sentTest(model, sents, t)
+
+	lmBytes, err := model.MarshalBinary()
+	if err != nil {
+		t.Fatal("error in MarshalBinary(): ", err)
+	}
+	var model2 Model
+	if err := model2.UnmarshalBinary(lmBytes); err != nil {
+		t.Fatal("error in UnmarshalBinary(): ", err)
+	}
+	sentTest(&model2, sents, t)
 }
 
 func sentTest(model *Model, sents [][]token, t *testing.T) {
@@ -148,7 +159,8 @@ func checkModel(m *Model) error {
 			uf.Union(i, int(s.BackOffState))
 		}
 	}
-	for px, qw := range m.transitions {
+	for e := range m.transitions.Range() {
+		px, qw := srcWord(e.Key), tgtWeight(e.Value)
 		if qw.Tgt != STATE_NIL {
 			uf.Union(int(px.Src()), int(qw.Tgt))
 		}
@@ -176,7 +188,8 @@ func checkModel(m *Model) error {
 	}
 	// Every back-off state has at least one lexical transition.
 	internal := map[StateId]bool{}
-	for px, _ := range m.transitions {
+	for e := range m.transitions.Range() {
+		px := srcWord(e.Key)
 		internal[px.Src()] = true
 	}
 	for _, s := range m.states[_STATE_START:] {

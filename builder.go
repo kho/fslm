@@ -9,18 +9,28 @@ import (
 // Builder builds a Model from n-grams (e.g. estimated by SRILM). Must
 // be constrcuted using NewBuilder().
 type Builder struct {
+	scale  float64
 	vocab  *Vocab
 	states []state
 	nexts  []map[WordId]tgtWeight // TODO: memory hungry!
 }
 
-// NewBuilder constrcuts a new Builder. vocab is the base vocabulary
-// to use for the resulting Model; it can be nil, in which case a
-// default vocabulary with [<unk>, <s>, </s>] as [Unk, Bos, Eos] is
+// NewBuilder constrcuts a new Builder. scale is the initial
+// multiplier used to decide the number of buckets in final Model's
+// hash map; when <= 1, a default multiplier of 1.5 is used. Larger
+// multiplier generally speeds at final Model look up speed at the
+// cost of using more memory. vocab is the base vocabulary to use for
+// the resulting Model; it can be nil, in which case a default
+// vocabulary with [<unk>, <s>, </s>] as [Unk, Bos, Eos] is
 // created. Subsequent calls from Builder will not modify outside
 // vocab (i.e. a copy is made when vocab != nil).
-func NewBuilder(vocab *Vocab) *Builder {
+func NewBuilder(scale float64, vocab *Vocab) *Builder {
 	var builder Builder
+	if scale <= 1 {
+		builder.scale = 1.5
+	} else {
+		builder.scale = scale
+	}
 	if vocab == nil {
 		builder.vocab = NewVocab("<unk>", "<s>", "</s>")
 	} else {
@@ -182,13 +192,16 @@ func (b *Builder) pruneMove() *Model {
 	}
 	var m Model
 	m.Vocab, b.vocab = b.vocab, nil
-	// Compute mapping from old StateId to pruned StateId.
+	// Compute mapping from old StateId to pruned StateId. Also counts
+	// the total number of lexical transitions.
 	oldToNew := make([]StateId, len(b.states))
+	numTransitions := len(b.nexts[_STATE_EMPTY]) + len(b.nexts[_STATE_START])
 	// _STATE_START and _STATE_EMPTY must be unchanged.
 	oldToNew[_STATE_START] = _STATE_START
 	nextId := StateId(_STATE_START + 1)
 	for i, n := range b.nexts[_STATE_START+1:] {
 		o := _STATE_START + 1 + StateId(i)
+		numTransitions += len(n)
 		if len(n) > 0 {
 			oldToNew[o] = nextId
 			nextId++
@@ -197,7 +210,7 @@ func (b *Builder) pruneMove() *Model {
 		}
 	}
 	// Copy transitions and apply the mapping.
-	m.transitions = map[srcWord]tgtWeight{}
+	m.transitions = NewMap(int(float64(numTransitions)*b.scale), 0)
 	for i, n := range b.nexts {
 		b.nexts[i] = nil // Allow GC to reclaim this map after this iteration.
 		for x, qw := range n {
@@ -210,7 +223,7 @@ func (b *Builder) pruneMove() *Model {
 					w += s.BackOffWeight
 				}
 			}
-			m.transitions[newSrcWord(oldToNew[i], x)] = tgtWeight{q, w}
+			*m.transitions.FindOrInsert(Key(newSrcWord(oldToNew[i], x))) = Value(tgtWeight{q, w})
 		}
 	}
 	// Prune states.

@@ -34,7 +34,7 @@ func main() {
 	)
 	switch format {
 	case "arpa":
-		model, err = fslm.FromARPAFile(args.Model)
+		model, err = fslm.FromARPAFile(args.Model, 0)
 	case "gob":
 		model, err = fslm.FromGobFile(args.Model)
 	default:

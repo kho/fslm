@@ -238,6 +238,7 @@ func (b *Builder) pruneMove() *Model {
 	m.states = m.states[:nextId]
 	if glog.V(1) {
 		glog.Infof("after pruning: %d states", nextId)
+		glog.Infof("there are %d lexical transitions", numTransitions)
 	}
 	return &m
 }

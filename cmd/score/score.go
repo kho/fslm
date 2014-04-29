@@ -9,6 +9,7 @@ import (
 	"github.com/kho/fslm"
 	"math"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -29,9 +30,12 @@ func main() {
 	easy.ParseFlagsAndArgs(&args)
 
 	var (
-		model *fslm.Model
-		err   error
+		model         *fslm.Model
+		err           error
+		before, after runtime.MemStats
 	)
+	runtime.GC()
+	runtime.ReadMemStats(&before)
 	switch format {
 	case "arpa":
 		model, err = fslm.FromARPAFile(args.Model, 0)
@@ -43,10 +47,11 @@ func main() {
 	if err != nil {
 		glog.Fatal(err)
 	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
 	numStates, numTransitions, numWords := model.Size()
-	if glog.V(1) {
-		glog.Infof("loaded LM with %d states, %d transitions, and %d words", numStates, numTransitions, numWords)
-	}
+	glog.Infof("loaded LM with %d states, %d transitions, and %d words", numStates, numTransitions, numWords)
+	glog.Infof("LM memory usage: %.2fMB", float64(after.Alloc-before.Alloc)/float64(1<<20))
 
 	in := bufio.NewScanner(os.Stdin)
 

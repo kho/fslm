@@ -31,7 +31,10 @@ func main() {
 	if *cpuprofile != "" {
 		w := easy.MustCreate(*cpuprofile)
 		pprof.StartCPUProfile(w)
-		defer w.Close()
+		defer func() {
+			pprof.StopCPUProfile()
+			w.Close()
+		}()
 	}
 
 	var (

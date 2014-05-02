@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"github.com/golang/glog"
 	"io"
 	"os"
 	"reflect"
@@ -328,8 +329,9 @@ func OpenMappedFile(path string) (m *MappedFile, err error) {
 	if err != nil {
 		return
 	}
-	data, err := syscall.Mmap(int(f.Fd()), 0, int(stat.Size()), syscall.PROT_READ, 0)
+	data, err := syscall.Mmap(int(f.Fd()), 0, int(stat.Size()), syscall.PROT_READ, syscall.MAP_SHARED)
 	if err != nil {
+		glog.Info("oops")
 		return
 	}
 	m = &MappedFile{f, data}

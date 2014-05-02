@@ -9,10 +9,12 @@ import (
 // Builder builds a Model from n-grams (e.g. estimated by SRILM). Must
 // be constrcuted using NewBuilder().
 type Builder struct {
-	scale  float64
-	vocab  *Vocab
-	states []state
-	nexts  []map[WordId]tgtWeight // TODO: memory hungry!
+	scale        float64
+	vocab        *Vocab
+	bos, eos     string
+	bosId, eosId WordId
+	transitions  []*xqwMap
+	backoff      []StateWeight
 }
 
 // NewBuilder constrcuts a new Builder. scale is the initial
@@ -21,25 +23,48 @@ type Builder struct {
 // multiplier generally speeds at final Model look up speed at the
 // cost of using more memory. vocab is the base vocabulary to use for
 // the resulting Model; it can be nil, in which case a default
-// vocabulary with [<unk>, <s>, </s>] as [Unk, Bos, Eos] is
-// created. Subsequent calls from Builder will not modify outside
-// vocab (i.e. a copy is made when vocab != nil).
-func NewBuilder(scale float64, vocab *Vocab) *Builder {
+// vocabulary with [<s>, </s>] as the first two words is
+// created. Otherwise, bos and eos are used to query the sentence
+// boundary symbols from the vocab. Subsequent calls from Builder will
+// not modify outside vocab (i.e. a copy is made when vocab != nil).
+func NewBuilder(scale float64, vocab *Vocab, bos, eos string) *Builder {
 	var builder Builder
+
 	if scale <= 1 {
 		builder.scale = 1.5
 	} else {
 		builder.scale = scale
 	}
+
 	if vocab == nil {
-		builder.vocab = NewVocab("<unk>", "<s>", "</s>")
+		vocab = NewVocab([]string{"<s>", "</s>"})
+		bos = "<s>"
+		eos = "</s>"
 	} else {
-		builder.vocab = vocab.Copy()
+		vocab = vocab.Copy()
 	}
+	builder.vocab = vocab
+	if bos != eos {
+		builder.bos = bos
+		builder.eos = eos
+	} else {
+		glog.Fatalf("begin-of-sentence and end-of-sentence are the same word %q", bos)
+	}
+
+	if builder.bosId = vocab.IdOf(bos); builder.bosId == WORD_NIL {
+		glog.Fatalf("%q not in vocabulary", bos)
+	}
+	if builder.eosId = vocab.IdOf(eos); builder.eosId == WORD_NIL {
+		glog.Fatalf("%q not in vocabulary", eos)
+	}
+
 	// _STATE_EMPTY and _STATE_START.
 	builder.newState()
 	builder.newState()
-	builder.setTransition(_STATE_EMPTY, WORD_BOS, _STATE_START, 0)
+	builder.setTransition(_STATE_EMPTY, builder.bosId, _STATE_START, 0)
+	// We need to ensure _STATE_START has some bucket because it is the
+	// only state that is not pre-walked.
+	builder.transitions[_STATE_START] = newXqwMap(0, 0)
 	return &builder
 }
 
@@ -55,18 +80,33 @@ func (b *Builder) AddNgram(context []string, word string, weight Weight, backOff
 	if backOff <= textLog0 {
 		backOff = WEIGHT_LOG0
 	}
-	if len(context) > 0 && word == b.vocab.BOS && weight > -10 {
+
+	if len(context) > 0 {
+		if context[0] == b.eos {
+			glog.Fatalf("end-of-sentence in context %q", context)
+		}
+		for _, i := range context[1:] {
+			if i == b.bos {
+				glog.Fatalf("begin-of-sentence not in the beginning of context %q", context)
+			}
+			if i == b.eos {
+				glog.Fatalf("end-of-sentence in context %q", context)
+			}
+		}
+	}
+
+	if len(context) > 0 && word == b.bos && weight > -10 {
 		glog.Warningf("there is a non-unigram ending in %q with weight %g (such n-gram should have -inf weight or not occur in the LM)", word, weight)
 	}
-	if word == b.vocab.EOS && backOff != 0 {
+	if word == b.eos && backOff != 0 {
 		glog.Warningf("non-zero back-off %g for a n-gram ending in %q", backOff, word)
 	}
 
 	p := b.findState(_STATE_EMPTY, context)
 	x := b.vocab.IdOrAdd(word)
 	q := STATE_NIL
-	// Only use a valid destination state when word is not EOS.
-	if x != WORD_EOS {
+	// Only use a valid destination state when word is not </s>.
+	if x != b.eosId {
 		q = b.findNextState(p, x)
 		b.setBackOffWeight(q, backOff)
 	}
@@ -74,34 +114,34 @@ func (b *Builder) AddNgram(context []string, word string, weight Weight, backOff
 }
 
 func (b *Builder) newState() StateId {
-	s := StateId(len(b.states))
-	// Back-off is initialized to STATE_NIL to signify an "unknown"
-	// back-off.
-	b.states = append(b.states, state{STATE_NIL, 0})
+	s := StateId(len(b.backoff))
 	// A large number of states may not have any out-going transition at
 	// all. Delay construction of the map to save space.
-	b.nexts = append(b.nexts, nil)
+	b.transitions = append(b.transitions, nil)
+	// Back-off is initialized to STATE_NIL to signify an "unknown"
+	// back-off.
+	b.backoff = append(b.backoff, StateWeight{STATE_NIL, 0})
 	return s
 }
 
 func (b *Builder) setTransition(p StateId, x WordId, q StateId, w Weight) {
-	if b.nexts[p] == nil {
-		b.nexts[p] = map[WordId]tgtWeight{}
+	if b.transitions[p] == nil {
+		b.transitions[p] = newXqwMap(0, 0)
 	}
-	b.nexts[p][x] = tgtWeight{q, w}
+	*b.transitions[p].FindOrInsert(x) = StateWeight{q, w}
 }
 
 func (b *Builder) setBackOffWeight(p StateId, bow Weight) {
-	b.states[p].BackOffWeight = bow
+	b.backoff[p].Weight = bow
 }
 
 func (b *Builder) findNextState(p StateId, x WordId) StateId {
-	if b.nexts[p] == nil {
-		b.nexts[p] = map[WordId]tgtWeight{}
+	if b.transitions[p] == nil {
+		b.transitions[p] = newXqwMap(0, 0)
 	}
-	qw, ok := b.nexts[p][x]
-	if ok {
-		return qw.Tgt
+	qw := b.transitions[p].Find(x)
+	if qw != nil {
+		return qw.State
 	}
 	q := b.newState()
 	b.setTransition(p, x, q, 0)
@@ -119,6 +159,13 @@ func (b *Builder) findState(p StateId, ws []string) StateId {
 // b. Subsequent calls to b.AddNgram() will have undefined behavior
 // (probably panic and will definitely not give you correct Model).
 func (b *Builder) Dump() *Model {
+	// For safety.
+	if _STATE_EMPTY != 0 {
+		glog.Fatalf("this assumes _STATE_EMPTY == 0; got %d", _STATE_EMPTY)
+	}
+	if _STATE_START != 1 {
+		glog.Fatalf("this assumes _STATE_START == 1; got %d", _STATE_START)
+	}
 	b.link()
 	return b.pruneMove()
 }
@@ -126,24 +173,23 @@ func (b *Builder) Dump() *Model {
 // link links each state p to the first state q with at least one
 // lexical transition along p's back-off chain.
 func (b *Builder) link() {
-	// For safety.
-	if _STATE_EMPTY != 0 || _STATE_START != 1 {
-		panic("this assumes _STATE_EMPTY == 0 and _STATE_START == 1")
-	}
 	// Children of _STATE_EMPTY directly backs off the _STATE_EMPTY.
-	for _, qw := range b.nexts[_STATE_EMPTY] {
-		if qw.Tgt != STATE_NIL {
-			b.states[qw.Tgt].BackOffState = _STATE_EMPTY
+	for xqw := range b.transitions[_STATE_EMPTY].Range() {
+		q := xqw.Value.State
+		if q != STATE_NIL {
+			b.backoff[q].State = _STATE_EMPTY
 		}
 	}
 	// States are created with STATE_NIL as the default back-off. Except
 	// for _STATE_EMPTY, having a STATE_NIL back-off means the back-off
 	// is yet to be computed.
-	for i, next := range b.nexts[1:] {
-		for x, qw := range next {
-			p, q := StateId(i+1), qw.Tgt
-			if q != STATE_NIL {
-				b.linkTransition(p, x, q)
+	for i, es := range b.transitions[_STATE_EMPTY+1:] {
+		if es != nil {
+			for xqw := range es.Range() {
+				p, x, q := StateId(i+1), WordId(xqw.Key), xqw.Value.State
+				if q != STATE_NIL {
+					b.linkTransition(p, x, q)
+				}
 			}
 		}
 	}
@@ -154,91 +200,101 @@ func (b *Builder) link() {
 // function might change q's back-off weight when the final back-off
 // state is not q's immediately back-off.
 func (b *Builder) linkTransition(p StateId, x WordId, q StateId) (StateId, Weight) {
-	qState := &b.states[q]
-	if qState.BackOffState == STATE_NIL {
+	qBackOff := &b.backoff[q]
+	if qBackOff.State == STATE_NIL {
 		// Find the next back-off state.
-		pBack := b.states[p].BackOffState
-		qwBack, ok := b.nexts[pBack][x]
-		for !ok && pBack != _STATE_EMPTY {
-			pBack = b.states[pBack].BackOffState
-			qwBack, ok = b.nexts[pBack][x]
+		pBack := b.backoff[p].State
+		qwBack := b.transitions[pBack].Find(x)
+		for qwBack == nil && pBack != _STATE_EMPTY {
+			pBack = b.backoff[pBack].State
+			qwBack = b.transitions[pBack].Find(x)
 		}
-		if ok {
-			qBack := qwBack.Tgt
+		if qwBack != nil {
+			qBack := qwBack.State
 			// pBack is not STATE_NIL; qBack is not _STATE_EMPTY. We can go
 			// back further.
 			qBackBack, w := b.linkTransition(pBack, x, qBack)
-			if len(b.nexts[qBack]) == 0 {
-				qState.BackOffState = qBackBack
+			if b.transitions[qBack] == nil { // = .Size() == 0 (for states other than _STATE_START, we only create the map at first insertion).
+				qBackOff.State = qBackBack
 				// We are skipping the transition from qBack to qBackBack,
 				// thus its weight needs to be included in our back-off weight
 				// as well.
-				qState.BackOffWeight += w
+				qBackOff.Weight += w
 			} else {
-				qState.BackOffState = qBack
+				qBackOff.State = qBack
 			}
 		} else {
-			qState.BackOffState = _STATE_EMPTY
+			qBackOff.State = _STATE_EMPTY
 		}
 	}
-	return qState.BackOffState, qState.BackOffWeight
+	return qBackOff.State, qBackOff.Weight
 }
 
 // pruneMove prunes the state space for immediately backing-off states
 // and moves the contents to a real Model.
 func (b *Builder) pruneMove() *Model {
 	if glog.V(1) {
-		glog.Infof("before pruning: %d states", len(b.states))
+		glog.Infof("before pruning: %d states", len(b.backoff))
 	}
 	var m Model
-	m.Vocab, b.vocab = b.vocab, nil
-	// Compute mapping from old StateId to pruned StateId. Also counts
-	// the total number of lexical transitions.
-	oldToNew := make([]StateId, len(b.states))
-	numTransitions := len(b.nexts[_STATE_EMPTY]) + len(b.nexts[_STATE_START])
-	// _STATE_START and _STATE_EMPTY must be unchanged.
+	m.Vocab, b.vocab = b.vocab, nil // Steal!
+	m.BOS, m.EOS, m.BOSId, m.EOSId = b.bos, b.eos, b.bosId, b.eosId
+	// Compute mapping from old StateId to pruned StateId.
+	oldToNew := make([]StateId, len(b.backoff))
+	// _STATE_EMPTY and _STATE_START must be unchanged.
+	oldToNew[_STATE_EMPTY] = _STATE_EMPTY
 	oldToNew[_STATE_START] = _STATE_START
 	nextId := StateId(_STATE_START + 1)
-	for i, n := range b.nexts[_STATE_START+1:] {
+	for i, es := range b.transitions[_STATE_START+1:] {
 		o := _STATE_START + 1 + StateId(i)
-		numTransitions += len(n)
-		if len(n) > 0 {
+		if es != nil { // = .Size() != 0 (for states other than _STATE_START, we only create the map at the first insertion).
 			oldToNew[o] = nextId
 			nextId++
 		} else {
 			oldToNew[o] = STATE_NIL
 		}
 	}
+	m.transitions = make([]xqwBuckets, nextId)
 	// Copy transitions and apply the mapping.
-	m.transitions = NewMap(int(float64(numTransitions)*b.scale), 0)
-	for i, n := range b.nexts {
-		b.nexts[i] = nil // Allow GC to reclaim this map after this iteration.
-		for x, qw := range n {
-			q, w := qw.Tgt, qw.Weight
-			if q != STATE_NIL {
-				q = oldToNew[q]
-				if q == STATE_NIL {
-					s := &b.states[qw.Tgt]
-					q = oldToNew[s.BackOffState]
-					w += s.BackOffWeight
+	for i, es := range b.transitions {
+		if es == nil { // = .Size() == 0 (for states other than _STATE_START)
+			continue
+		}
+		// Steal Builder's data.
+		b.transitions[i] = nil
+		// Walk over the buckets. If it holds an edge, pre-walk to the
+		// proper destination state. If it does not hold an edge, set it
+		// to the back-off.
+		backoff := b.backoff[i]
+		if backoff.State != STATE_NIL {
+			backoff.State = oldToNew[backoff.State]
+		}
+		buckets := es.buckets
+		for j, xqw := range buckets {
+			if xqw.Key != WORD_NIL {
+				q, w := xqw.Value.State, xqw.Value.Weight
+				if q != STATE_NIL {
+					oldQ := q
+					q = oldToNew[oldQ]
+					if q == STATE_NIL {
+						s := &b.backoff[oldQ]
+						q = oldToNew[s.State]
+						w += s.Weight
+					}
 				}
+				xqw.Value = StateWeight{q, w}
+			} else {
+				xqw.Value = backoff
 			}
-			*m.transitions.FindOrInsert(Key(newSrcWord(oldToNew[i], x))) = Value(tgtWeight{q, w})
+			buckets[j] = xqw
 		}
+		m.transitions[oldToNew[i]] = buckets
 	}
-	// Prune states.
-	m.states, b.states = b.states, nil
-	for o, s := range m.states[_STATE_START:] {
-		n := oldToNew[StateId(o)+_STATE_START]
-		if n != STATE_NIL {
-			s.BackOffState = oldToNew[s.BackOffState]
-			m.states[n] = s
-		}
-	}
-	m.states = m.states[:nextId]
+	// Free last two pieces of Builder data.
+	b.backoff = nil
+	b.transitions = nil
 	if glog.V(1) {
 		glog.Infof("after pruning: %d states", nextId)
-		glog.Infof("there are %d lexical transitions", numTransitions)
 	}
 	return &m
 }
@@ -247,14 +303,17 @@ func (b *Builder) pruneMove() *Model {
 func (b *Builder) Graphviz(w io.Writer) {
 	fmt.Fprintln(w, "digraph {")
 	fmt.Fprintln(w, "  // lexical transitions")
-	for p, xqw := range b.nexts {
-		for x, qw := range xqw {
-			fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, qw.Tgt, fmt.Sprintf("%s : %g", b.vocab.StringOf(x), qw.Weight))
+	for p, es := range b.transitions {
+		if es != nil {
+			for xqw := range es.Range() {
+				x, qw := WordId(xqw.Key), xqw.Value
+				fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, qw.State, fmt.Sprintf("%s : %g", b.vocab.StringOf(x), qw.Weight))
+			}
 		}
 	}
 	fmt.Fprintln(w, "  // back-off transitions")
-	for i, s := range b.states {
-		fmt.Fprintf(w, "  %d -> %d [label=%q,style=dashed]\n", i, s.BackOffState, fmt.Sprintf("%g", s.BackOffWeight))
+	for i, s := range b.backoff {
+		fmt.Fprintf(w, "  %d -> %d [label=%q,style=dashed]\n", i, s.State, fmt.Sprintf("%g", s.Weight))
 	}
 	fmt.Fprintln(w, "}")
 }

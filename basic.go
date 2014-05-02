@@ -12,9 +12,7 @@ import (
 type WordId uint32
 
 const (
-	WORD_UNK WordId = 0 // Vocab always uses this for <unk>.
-	WORD_BOS WordId = 1 // Vocab always uses this for <s>.
-	WORD_EOS WordId = 2 // Vocab always uses this for </s>.
+	WORD_NIL WordId = ^WordId(0) // An invalid word.
 )
 
 // StateId represents a Model state.
@@ -52,4 +50,9 @@ var (
 
 func init() {
 	flag.Var(&textLog0, "fslm.log0", "treat weight <= this as log(0)")
+}
+
+type StateWeight struct {
+	State  StateId
+	Weight Weight
 }

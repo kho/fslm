@@ -5,17 +5,17 @@ import (
 	"encoding/gob"
 )
 
-type Entry struct {
-	Key   Key
-	Value Value
+type xqwEntry struct {
+	Key   WordId
+	Value StateWeight
 }
 
-type Map struct {
-	buckets               buckets
+type xqwMap struct {
+	buckets               xqwBuckets
 	numEntries, threshold int
 }
 
-func NewMap(initNumBuckets int, maxUsed float64) *Map {
+func newXqwMap(initNumBuckets int, maxUsed float64) *xqwMap {
 	if initNumBuckets < 2 {
 		initNumBuckets = 2
 	}
@@ -30,43 +30,37 @@ func NewMap(initNumBuckets int, maxUsed float64) *Map {
 	if threshold > initNumBuckets-1 {
 		threshold = initNumBuckets - 1
 	}
-	return &Map{initBuckets(initNumBuckets), 0, threshold}
+	return &xqwMap{xqwInitBuckets(initNumBuckets), 0, threshold}
 }
 
-func (m *Map) Size() int {
+func (m *xqwMap) Size() int {
 	return m.numEntries
 }
 
-func (m *Map) Find(k Key) *Value {
+func (m *xqwMap) Find(k WordId) *StateWeight {
 	return m.buckets.Find(k)
 }
 
-func (m *Map) ConstFind(k Key) (Value, bool) {
-	return m.buckets.ConstFind(k)
-}
-
-func (m *Map) FindOrInsert(k Key) *Value {
-	v := m.Find(k)
-	if v != nil {
-		return v
+func (m *xqwMap) FindOrInsert(k WordId) *StateWeight {
+	e := m.buckets.FindEntry(k)
+	if e.Key != WORD_NIL {
+		return &e.Value
 	}
-	return m.insert(k)
+	// Need to insert.
+	if m.numEntries >= m.threshold {
+		m.double()
+		e = m.buckets.nextAvailable(k)
+	}
+	*e = xqwEntry{Key: k}
+	m.numEntries++
+	return &e.Value
 }
 
-func (m *Map) Range() chan Entry {
-	out := make(chan Entry)
-	go func() {
-		for _, e := range m.buckets {
-			if e.Key != KEY_NIL {
-				out <- e
-			}
-		}
-		close(out)
-	}()
-	return out
+func (m *xqwMap) Range() chan xqwEntry {
+	return m.buckets.Range()
 }
 
-func (m *Map) MarshalBinary() (data []byte, err error) {
+func (m *xqwMap) MarshalBinary() (data []byte, err error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err = enc.Encode(m.buckets); err != nil {
@@ -81,7 +75,7 @@ func (m *Map) MarshalBinary() (data []byte, err error) {
 	return buf.Bytes(), nil
 }
 
-func (m *Map) UnmarshalBinary(data []byte) (err error) {
+func (m *xqwMap) UnmarshalBinary(data []byte) (err error) {
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	if err = dec.Decode(&m.buckets); err != nil {
 		return
@@ -95,21 +89,11 @@ func (m *Map) UnmarshalBinary(data []byte) (err error) {
 	return nil
 }
 
-func (m *Map) insert(k Key) *Value {
-	if m.numEntries >= m.threshold {
-		m.double()
-	}
-	ei := m.buckets.nextAvailable(k)
-	*ei = Entry{Key: k}
-	m.numEntries++
-	return &ei.Value
-}
-
-func (m *Map) double() {
-	buckets := initBuckets(len(m.buckets) * 2)
+func (m *xqwMap) double() {
+	buckets := xqwInitBuckets(len(m.buckets) * 2)
 	for _, e := range m.buckets {
 		k := e.Key
-		if !equal(k, KEY_NIL) {
+		if !WordIdEqual(k, WORD_NIL) {
 			dst := buckets.nextAvailable(k)
 			*dst = e
 		}
@@ -118,27 +102,55 @@ func (m *Map) double() {
 	m.threshold *= 2
 }
 
-type buckets []Entry
+type xqwBuckets []xqwEntry
 
-func initBuckets(n int) buckets {
-	s := make(buckets, n)
+func xqwInitBuckets(n int) xqwBuckets {
+	s := make(xqwBuckets, n)
 	for i := range s {
-		s[i].Key = KEY_NIL
+		s[i].Key = WORD_NIL
 	}
 	return s
 }
 
-func (b buckets) Find(k Key) (v *Value) {
+func (b xqwBuckets) Size() (n int) {
+	for _, e := range b {
+		if e.Key != WORD_NIL {
+			n++
+		}
+	}
+	return
+}
+
+// var numLookUps, numCollisions int
+
+func (b xqwBuckets) Find(k WordId) (v *StateWeight) {
+	// numLookUps++
 	i := b.start(k)
 	for {
 		// Maybe switch to range to trade 1 bound check for 1 copy?
 		ei := &b[i]
 		ki := ei.Key
-		if equal(ki, k) {
+		if WordIdEqual(ki, k) {
 			return &ei.Value
 		}
-		if equal(ki, KEY_NIL) {
+		if WordIdEqual(ki, WORD_NIL) {
 			return nil
+		}
+		// numCollisions++
+		i++
+		if i == len(b) {
+			i = 0
+		}
+	}
+}
+
+func (b xqwBuckets) FindEntry(k WordId) *xqwEntry {
+	i := b.start(k)
+	for {
+		ei := &b[i]
+		ki := ei.Key
+		if WordIdEqual(ki, k) || WordIdEqual(ki, WORD_NIL) {
+			return ei
 		}
 		i++
 		if i == len(b) {
@@ -147,40 +159,28 @@ func (b buckets) Find(k Key) (v *Value) {
 	}
 }
 
-func (b buckets) ConstFind(k Key) (Value, bool) {
-	i := b.start(k)
-	for _, e := range b[i:] {
-		ki := e.Key
-		if equal(ki, k) {
-			return e.Value, true
+func (b xqwBuckets) Range() chan xqwEntry {
+	ch := make(chan xqwEntry)
+	go func() {
+		for _, e := range b {
+			if e.Key != WORD_NIL {
+				ch <- e
+			}
 		}
-		if equal(ki, KEY_NIL) {
-			var v Value
-			return v, false
-		}
-	}
-	for _, e := range b[:i] {
-		ki := e.Key
-		if equal(ki, k) {
-			return e.Value, true
-		}
-		if equal(ki, KEY_NIL) {
-			var v Value
-			return v, false
-		}
-	}
-	panic("impossible")
+		close(ch)
+	}()
+	return ch
 }
 
-func (b buckets) start(k Key) int {
-	return int(hash(k) % uint(len(b)))
+func (b xqwBuckets) start(k WordId) int {
+	return int(WordIdHash(k) % uint(len(b)))
 }
 
-func (b buckets) nextAvailable(k Key) *Entry {
+func (b xqwBuckets) nextAvailable(k WordId) *xqwEntry {
 	i := b.start(k)
 	for {
 		ei := &b[i]
-		if equal(ei.Key, KEY_NIL) {
+		if WordIdEqual(ei.Key, WORD_NIL) {
 			return ei
 		}
 		i++

@@ -92,10 +92,26 @@ var trickyBackOffSents = [][]token{
 	{{"a", -1}, {"b", 0}, {"c", 0}, {"e", -4}, {"</s>", 1 + 0.1}},
 }
 
+func TestLMSimple(t *testing.T) {
+	lmTest(simpleTrigramLM, simpleTrigramSents, t)
+}
+
+func TestLMSparse(t *testing.T) {
+	lmTest(sparseFivegramLM, sparseFivegramSents, t)
+}
+
+func TestLMSparser(t *testing.T) {
+	lmTest(sparserFivegramLM, sparserFivegramSents, t)
+}
+
+func TestLMTrickyBackOff(t *testing.T) {
+	lmTest(trickyBackOffLM, trickyBackOffSents, t)
+}
+
 const floatTol = 1e-7
 
 func lmTest(lm []ngram, sents [][]token, t *testing.T) {
-	builder := NewBuilder(0, nil)
+	builder := NewBuilder(0, nil, "", "")
 	for _, i := range lm {
 		c, x, w, b := i.Params()
 		builder.AddNgram(c, x, w, b)
@@ -153,16 +169,18 @@ func sentTest(model *Model, sents [][]token, t *testing.T) {
 
 func checkModel(m *Model) error {
 	// All states should be reachable from _STATE_START.
-	uf := newUnionFind(len(m.states))
-	for i, s := range m.states {
-		if s.BackOffState != STATE_NIL {
-			uf.Union(i, int(s.BackOffState))
+	uf := newUnionFind(len(m.transitions))
+	for i, es := range m.transitions {
+		backoff, _ := m.BackOff(StateId(i))
+		if backoff != STATE_NIL {
+			uf.Union(i, int(backoff))
 		}
-	}
-	for e := range m.transitions.Range() {
-		px, qw := srcWord(e.Key), tgtWeight(e.Value)
-		if qw.Tgt != STATE_NIL {
-			uf.Union(int(px.Src()), int(qw.Tgt))
+		for e := range es.Range() {
+			p := StateId(i)
+			qw := StateWeight(e.Value)
+			if qw.State != STATE_NIL {
+				uf.Union(int(p), int(qw.State))
+			}
 		}
 	}
 	for i := range uf {
@@ -171,34 +189,36 @@ func checkModel(m *Model) error {
 		}
 	}
 	// _STATE_EMPTY backs off to STATE_NIL.
-	if m.states[_STATE_EMPTY].BackOffState != STATE_NIL {
+	if p, _ := m.BackOff(_STATE_EMPTY); p != STATE_NIL {
 		return errors.New("wrong back-off for _STATE_EMPTY")
 	}
 	// All other states eventually backs off to _STATE_EMPTY.
-	uf = newUnionFind(len(m.states))
-	for i, s := range m.states {
-		if s.BackOffState != STATE_NIL {
-			uf.Union(int(s.BackOffState), i)
+	uf = newUnionFind(len(m.transitions))
+	for i := range m.transitions {
+		if b, _ := m.BackOff(StateId(i)); b != STATE_NIL {
+			uf.Union(int(b), i)
 		}
 	}
-	for i := range uf[_STATE_START:] {
+	for i := range uf[_STATE_EMPTY+1:] {
 		if uf.Find(i) != int(_STATE_EMPTY) {
 			return errors.New("there are states that do not back off to empty")
 		}
 	}
 	// Every back-off state has at least one lexical transition.
 	internal := map[StateId]bool{}
-	for e := range m.transitions.Range() {
-		px := srcWord(e.Key)
-		internal[px.Src()] = true
+	for i, es := range m.transitions {
+		if es.Size() > 0 {
+			internal[StateId(i)] = true
+		}
 	}
-	for _, s := range m.states[_STATE_START:] {
-		if !internal[s.BackOffState] {
+	for i := range m.transitions[_STATE_EMPTY+1:] {
+		b, _ := m.BackOff(StateId(i + 1))
+		if !internal[b] {
 			return errors.New("backing off to leaf state")
 		}
 	}
 	delete(internal, _STATE_START)
-	if len(internal)+1 != len(m.states) {
+	if len(internal)+1 != len(m.transitions) {
 		return errors.New("there are non-start leaf states")
 	}
 	return nil
@@ -229,11 +249,4 @@ func (uf unionFind) Find(a int) int {
 		uf[a], a = r, uf[a]
 	}
 	return r
-}
-
-func TestLMs(t *testing.T) {
-	lmTest(simpleTrigramLM, simpleTrigramSents, t)
-	lmTest(sparseFivegramLM, sparseFivegramSents, t)
-	lmTest(sparserFivegramLM, sparserFivegramSents, t)
-	lmTest(trickyBackOffLM, trickyBackOffSents, t)
 }

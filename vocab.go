@@ -73,7 +73,7 @@ func (v *Vocab) MarshalBinary() (data []byte, err error) {
 }
 
 // UnmarshalBinary deserializes a Vocab. The Vocab will be in an
-// invalid state an error is returned.
+// invalid state when an error is returned.
 func (v *Vocab) UnmarshalBinary(data []byte) (err error) {
 	var id2str []string
 	dec := gob.NewDecoder(bytes.NewReader(data))

@@ -2,10 +2,15 @@ package fslm
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"reflect"
+	"syscall"
+	"unsafe"
 )
 
 // Model is a finite-state representation of a n-gram language
@@ -171,4 +176,183 @@ func (m *Model) UnmarshalBinary(data []byte) (err error) {
 		return errors.New(m.EOS + " not in vocabulary")
 	}
 	return nil
+}
+
+const modelMagic = "#fslm.hash"
+
+func (m *Model) header() (header []byte, err error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err = enc.Encode(m.Vocab); err != nil {
+		return
+	}
+	if err = enc.Encode(m.BOS); err != nil {
+		return
+	}
+	if err = enc.Encode(m.EOS); err != nil {
+		return
+	}
+	numBuckets := make([]int, len(m.transitions))
+	for i, t := range m.transitions {
+		numBuckets[i] = len(t)
+	}
+	if err = enc.Encode(numBuckets); err != nil {
+		return
+	}
+	header = buf.Bytes()
+	return
+}
+
+func (m *Model) parseHeader(header []byte) (numBuckets []int, err error) {
+	dec := gob.NewDecoder(bytes.NewReader(header))
+	if err = dec.Decode(&m.Vocab); err != nil {
+		return
+	}
+	if err = dec.Decode(&m.BOS); err != nil {
+		return
+	}
+	if err = dec.Decode(&m.EOS); err != nil {
+		return
+	}
+	if m.BOSId = m.Vocab.IdOf(m.BOS); m.BOSId == WORD_NIL {
+		err = errors.New(m.BOS + " not in vocabulary")
+		return
+	}
+	if m.EOSId = m.Vocab.IdOf(m.EOS); m.EOSId == WORD_NIL {
+		err = errors.New(m.EOS + " not in vocabulary")
+		return
+	}
+	if err = dec.Decode(&numBuckets); err != nil {
+		return
+	}
+	return
+}
+
+func (m *Model) WriteBinary(path string) (err error) {
+	w, err := os.Create(path)
+	if err != nil {
+		return
+	}
+	defer w.Close()
+	if _, err = w.Write([]byte(modelMagic)); err != nil {
+		return
+	}
+	// Header: binary.MaxVarintLen64 bytes of header length and then
+	// header.
+	header, err := m.header()
+	if err != nil {
+		return
+	}
+	headerLenBytes := make([]byte, binary.MaxVarintLen64)
+	binary.PutUvarint(headerLenBytes, uint64(len(header)))
+	if _, err = w.Write(headerLenBytes); err != nil {
+		return
+	}
+	if _, err = w.Write(header); err != nil {
+		return
+	}
+	// Raw entries.
+	written, err := w.Seek(0, 1)
+	if err != nil {
+		return
+	}
+	// Paddings so that each entry is properly aligned.
+	align := unsafe.Alignof(xqwEntry{})
+	if _, err = w.Write(make([]byte, align-uintptr(written)%align)); err != nil {
+		return
+	}
+	// Actual entries.
+	size := unsafe.Sizeof(xqwEntry{})
+	for _, i := range m.transitions {
+		iHeader := (*reflect.SliceHeader)(unsafe.Pointer(&i))
+		var bytes []byte
+		bytesHeader := (*reflect.SliceHeader)(unsafe.Pointer(&bytes))
+		bytesHeader.Data = iHeader.Data
+		bytesHeader.Len = int(uintptr(iHeader.Len) * size)
+		bytesHeader.Cap = bytesHeader.Len
+		if _, err = w.Write(bytes); err != nil {
+			return
+		}
+	}
+	return nil
+}
+
+func (m *Model) unsafeParseBinary(raw []byte) error {
+	if string(raw[:len(modelMagic)]) != modelMagic {
+		return errors.New("not a FSLM binary file")
+	}
+	read := uintptr(len(modelMagic))
+	headerLen, varintErr := binary.Uvarint(raw[read : read+binary.MaxVarintLen64])
+	if varintErr <= 0 {
+		return errors.New("error reading header size")
+	}
+	read += binary.MaxVarintLen64
+	numBuckets, err := m.parseHeader(raw[read : read+uintptr(headerLen)])
+	if err != nil {
+		return err
+	}
+	read += uintptr(headerLen)
+	align, size := unsafe.Alignof(xqwEntry{}), unsafe.Sizeof(xqwEntry{})
+	read += align - read%align
+	// The rest are actual entries.
+	if (uintptr(len(raw))-read)%size != 0 {
+		return errors.New(fmt.Sprintf("number of left-over bytes are not a multiple of %d", size))
+	}
+	entryBytes := raw[read:]
+	var entrySlice []xqwEntry
+	entryBytesHeader := (*reflect.SliceHeader)(unsafe.Pointer(&entryBytes))
+	entrySliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&entrySlice))
+	entrySliceHeader.Data = entryBytesHeader.Data
+	entrySliceHeader.Len = entryBytesHeader.Len / int(size)
+	entrySliceHeader.Cap = entrySliceHeader.Len
+	m.transitions = make([]xqwBuckets, len(numBuckets))
+	low := 0
+	for i, n := range numBuckets {
+		m.transitions[i] = xqwBuckets(entrySlice[low : low+n])
+		low += n
+	}
+	return nil
+}
+
+type MappedFile struct {
+	file *os.File
+	data []byte
+}
+
+func OpenMappedFile(path string) (m *MappedFile, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	stat, err := f.Stat()
+	if err != nil {
+		return
+	}
+	data, err := syscall.Mmap(int(f.Fd()), 0, int(stat.Size()), syscall.PROT_READ, 0)
+	if err != nil {
+		return
+	}
+	m = &MappedFile{f, data}
+	return
+}
+
+func (m *MappedFile) Close() error {
+	err1 := syscall.Munmap(m.data)
+	err2 := m.file.Close()
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}
+
+func FromBinary(path string) (*Model, *MappedFile, error) {
+	m, err := OpenMappedFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	var model Model
+	if err := model.unsafeParseBinary(m.data); err != nil {
+		return nil, nil, err
+	}
+	return &model, m, nil
 }

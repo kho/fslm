@@ -10,24 +10,29 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 )
 
-var (
-	unkScore fslm.Weight
-	format   string
-)
+var unkScore fslm.Weight
 
 func init() {
 	flag.Var(&unkScore, "unk", "score for <unk>")
-	flag.StringVar(&format, "format", "gob", "arpa or gob")
 }
 
 func main() {
 	var args struct {
 		Model string `name:"model" usage:"LM file"`
 	}
+	format := flag.String("format", "bin", "arpa or gob")
+	cpuprofile := flag.String("cpuprofile", "", "path to write CPU profile")
 	easy.ParseFlagsAndArgs(&args)
+
+	if *cpuprofile != "" {
+		w := easy.MustCreate(*cpuprofile)
+		pprof.StartCPUProfile(w)
+		defer w.Close()
+	}
 
 	var (
 		model         *fslm.Model
@@ -36,9 +41,13 @@ func main() {
 	)
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	switch format {
+	switch *format {
 	case "arpa":
 		model, err = fslm.FromARPAFile(args.Model, 0)
+	case "bin":
+		var mappedFile *fslm.MappedFile
+		model, mappedFile, err = fslm.FromBinary(args.Model)
+		defer mappedFile.Close()
 	case "gob":
 		model, err = fslm.FromGobFile(args.Model)
 	default:

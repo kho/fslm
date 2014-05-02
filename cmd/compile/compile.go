@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/gob"
 	"flag"
 	"github.com/golang/glog"
 	"github.com/kho/easy"
@@ -10,14 +9,17 @@ import (
 )
 
 func main() {
+	var args struct {
+		Out string `name:"out" usage:"output path"`
+	}
 	scale := flag.Float64("fslm.scale", 1.5, "scale multiplier for deciding the hash table size")
-	easy.ParseFlagsAndArgs(nil)
+	easy.ParseFlagsAndArgs(&args)
 
 	model, err := fslm.FromARPA(os.Stdin, *scale)
 	if err != nil {
 		glog.Fatal(err)
 	}
-	if err := gob.NewEncoder(os.Stdout).Encode(*model); err != nil {
+	if err := model.WriteBinary(args.Out); err != nil {
 		glog.Fatal(err)
 	}
 }

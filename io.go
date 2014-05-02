@@ -24,7 +24,6 @@ func FromGobFile(path string) (*Model, error) {
 	return FromGob(in)
 }
 
-// TODO: read order from ARPA file.
 func FromARPA(in io.Reader, scale float64) (*Model, error) {
 	builder := NewBuilder(scale, nil, "", "")
 	if err := stream.Run(stream.EnumRead(in, lineSplit), arpaTop{builder}); err != nil {

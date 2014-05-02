@@ -20,7 +20,7 @@ func NewVocab(initWords []string) *Vocab {
 		str2id[s] = WordId(i)
 	}
 	if len(id2str) != len(str2id) {
-		panic("there are duplicate words in initial word list")
+		panic("there are duplicate words in the initial word list")
 	}
 	return &Vocab{id2str, str2id}
 }

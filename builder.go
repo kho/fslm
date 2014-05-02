@@ -62,9 +62,6 @@ func NewBuilder(scale float64, vocab *Vocab, bos, eos string) *Builder {
 	builder.newState()
 	builder.newState()
 	builder.setTransition(_STATE_EMPTY, builder.bosId, _STATE_START, 0)
-	// We need to ensure _STATE_START has some bucket because it is the
-	// only state that is not pre-walked.
-	builder.transitions[_STATE_START] = newXqwMap(0, 0)
 	return &builder
 }
 
@@ -214,7 +211,7 @@ func (b *Builder) linkTransition(p StateId, x WordId, q StateId) (StateId, Weigh
 			// pBack is not STATE_NIL; qBack is not _STATE_EMPTY. We can go
 			// back further.
 			qBackBack, w := b.linkTransition(pBack, x, qBack)
-			if b.transitions[qBack] == nil { // = .Size() == 0 (for states other than _STATE_START, we only create the map at first insertion).
+			if b.transitions[qBack] == nil { // = .Size() == 0 (we only create the map at first insertion).
 				qBackOff.State = qBackBack
 				// We are skipping the transition from qBack to qBackBack,
 				// thus its weight needs to be included in our back-off weight
@@ -247,7 +244,7 @@ func (b *Builder) pruneMove() *Model {
 	nextId := StateId(_STATE_START + 1)
 	for i, es := range b.transitions[_STATE_START+1:] {
 		o := _STATE_START + 1 + StateId(i)
-		if es != nil { // = .Size() != 0 (for states other than _STATE_START, we only create the map at the first insertion).
+		if es != nil { // = .Size() != 0 (we only create the map at the first insertion).
 			oldToNew[o] = nextId
 			nextId++
 		} else {
@@ -256,20 +253,26 @@ func (b *Builder) pruneMove() *Model {
 	}
 	m.transitions = make([]xqwBuckets, nextId)
 	// Copy transitions and apply the mapping.
-	for i, es := range b.transitions {
-		if es == nil { // = .Size() == 0 (for states other than _STATE_START)
+	for o, n := range oldToNew {
+		if n == STATE_NIL {
 			continue
 		}
 		// Steal Builder's data.
-		b.transitions[i] = nil
+		next := b.transitions[o]
+		if next == nil {
+			// Possible only for _STATE_START.
+			next = newXqwMap(0, 0)
+		}
+		next.Resize(int(float64(next.Size()) * b.scale))
+		b.transitions[o] = nil
 		// Walk over the buckets. If it holds an edge, pre-walk to the
 		// proper destination state. If it does not hold an edge, set it
 		// to the back-off.
-		backoff := b.backoff[i]
+		backoff := b.backoff[o]
 		if backoff.State != STATE_NIL {
 			backoff.State = oldToNew[backoff.State]
 		}
-		buckets := es.buckets
+		buckets := next.buckets
 		for j, xqw := range buckets {
 			if xqw.Key != WORD_NIL {
 				q, w := xqw.Value.State, xqw.Value.Weight
@@ -288,7 +291,7 @@ func (b *Builder) pruneMove() *Model {
 			}
 			buckets[j] = xqw
 		}
-		m.transitions[oldToNew[i]] = buckets
+		m.transitions[n] = buckets
 	}
 	// Free last two pieces of Builder data.
 	b.backoff = nil

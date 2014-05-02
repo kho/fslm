@@ -16,14 +16,16 @@ type xqwMap struct {
 }
 
 func newXqwMap(initNumBuckets int, maxUsed float64) *xqwMap {
-	if initNumBuckets < 2 {
+	if initNumBuckets == 0 {
+		initNumBuckets = 4
+	} else if initNumBuckets < 2 {
 		initNumBuckets = 2
 	}
 	if maxUsed <= 0 || maxUsed >= 1 {
 		maxUsed = 0.8
 	}
-	// threshold = min(max(1, (initNumBuckets-1) * maxUsed), initNumBuckets-1)
-	threshold := int(float64(initNumBuckets-1) * maxUsed)
+	// threshold = min(max(1, initNumBuckets * maxUsed), initNumBuckets-1)
+	threshold := int(float64(initNumBuckets) * maxUsed)
 	if threshold < 1 {
 		threshold = 1
 	}
@@ -48,12 +50,32 @@ func (m *xqwMap) FindOrInsert(k WordId) *StateWeight {
 	}
 	// Need to insert.
 	if m.numEntries >= m.threshold {
-		m.double()
+		m.Resize(len(m.buckets) * 2)
 		e = m.buckets.nextAvailable(k)
 	}
 	*e = xqwEntry{Key: k}
 	m.numEntries++
 	return &e.Value
+}
+
+func (m *xqwMap) Resize(numBuckets int) {
+	if numBuckets < m.numEntries+1 {
+		numBuckets = m.numEntries + 1
+	}
+	buckets := xqwInitBuckets(numBuckets)
+	for _, e := range m.buckets {
+		k := e.Key
+		if !WordIdEqual(k, WORD_NIL) {
+			dst := buckets.nextAvailable(k)
+			*dst = e
+		}
+	}
+	oldNumBuckets := len(m.buckets)
+	m.buckets = buckets
+	m.threshold = m.threshold * numBuckets / oldNumBuckets
+	if m.threshold < m.numEntries {
+		m.threshold = m.numEntries
+	}
 }
 
 func (m *xqwMap) Range() chan xqwEntry {
@@ -87,19 +109,6 @@ func (m *xqwMap) UnmarshalBinary(data []byte) (err error) {
 		return
 	}
 	return nil
-}
-
-func (m *xqwMap) double() {
-	buckets := xqwInitBuckets(len(m.buckets) * 2)
-	for _, e := range m.buckets {
-		k := e.Key
-		if !WordIdEqual(k, WORD_NIL) {
-			dst := buckets.nextAvailable(k)
-			*dst = e
-		}
-	}
-	m.buckets = buckets
-	m.threshold *= 2
 }
 
 type xqwBuckets []xqwEntry

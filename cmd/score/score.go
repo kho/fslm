@@ -66,7 +66,7 @@ func main() {
 		glog.Fatalf("unknown format %q", format)
 	}
 	if err != nil {
-		glog.Fatal(err)
+		glog.Fatal("error in loading model: ", err)
 	}
 	runtime.GC()
 	runtime.ReadMemStats(&after)

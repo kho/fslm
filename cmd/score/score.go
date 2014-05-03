@@ -26,6 +26,7 @@ func main() {
 	}
 	format := flag.String("format", "bin", "arpa or gob")
 	cpuprofile := flag.String("cpuprofile", "", "path to write CPU profile")
+	memprofile := flag.String("memprofile", "", "path to write memory profile")
 	easy.ParseFlagsAndArgs(&args)
 
 	if *cpuprofile != "" {
@@ -33,6 +34,14 @@ func main() {
 		pprof.StartCPUProfile(w)
 		defer func() {
 			pprof.StopCPUProfile()
+			w.Close()
+		}()
+	}
+
+	if *memprofile != "" {
+		defer func() {
+			w := easy.MustCreate(*memprofile)
+			pprof.WriteHeapProfile(w)
 			w.Close()
 		}()
 	}
@@ -64,7 +73,6 @@ func main() {
 	numStates, numTransitions, numWords := model.Size()
 	glog.Infof("loaded LM with %d states, %d transitions, and %d words", numStates, numTransitions, numWords)
 	glog.Infof("LM memory usage: %.2fMB", float64(after.Alloc-before.Alloc)/float64(1<<20))
-
 	in := bufio.NewScanner(os.Stdin)
 
 	score, numWords, numSents, numOOVs := fslm.Weight(0), 0, 0, 0

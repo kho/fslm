@@ -10,19 +10,15 @@ import (
 	"strconv"
 )
 
-// arpaTop is the top-level iteratee for parsing a complete ARPA file.
-type arpaTop struct {
-	builder *Builder
-}
-
-func (it arpaTop) Final() error { return stream.Match(`\data\`).Final() }
-func (it arpaTop) Next(line []byte) (stream.Iteratee, bool, error) {
+// arpaTop builds a top-level iteratee for parsing a complete ARPA
+// file.
+func arpaTop(b *Builder) stream.Iteratee {
 	return stream.Seq{
 		stream.Match(`\data\`),
 		skipNgramCounts{},
-		stream.Star{ngramSection{it.builder}},
+		stream.Star{ngramSection{b}},
 		stream.Match(`\end\`),
-		stream.EOF}, false, nil
+		stream.EOF}
 }
 
 // skipNgramCounts skips the n-gram-count section.

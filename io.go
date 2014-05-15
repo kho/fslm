@@ -7,15 +7,15 @@ import (
 	"io"
 )
 
-func FromGob(in io.Reader) (*Model, error) {
-	var m Model
+func FromGob(in io.Reader) (*Hashed, error) {
+	var m Hashed
 	if err := gob.NewDecoder(in).Decode(&m); err != nil {
 		return nil, err
 	}
 	return &m, nil
 }
 
-func FromGobFile(path string) (*Model, error) {
+func FromGobFile(path string) (*Hashed, error) {
 	in, err := easy.Open(path)
 	if err != nil {
 		return nil, err
@@ -24,15 +24,15 @@ func FromGobFile(path string) (*Model, error) {
 	return FromGob(in)
 }
 
-func FromARPA(in io.Reader, scale float64) (*Model, error) {
-	builder := NewBuilder(scale, nil, "", "")
+func FromARPA(in io.Reader, scale float64) (*Hashed, error) {
+	builder := NewBuilder(nil, "", "")
 	if err := stream.Run(stream.EnumRead(in, lineSplit), arpaTop(builder)); err != nil {
 		return nil, err
 	}
-	return builder.Dump(), nil
+	return builder.DumpHashed(scale), nil
 }
 
-func FromARPAFile(path string, scale float64) (*Model, error) {
+func FromARPAFile(path string, scale float64) (*Hashed, error) {
 	in, err := easy.Open(path)
 	if err != nil {
 		return nil, err

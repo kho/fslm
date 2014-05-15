@@ -47,7 +47,7 @@ func main() {
 	}
 
 	var (
-		model         *fslm.Model
+		model         *fslm.Hashed
 		err           error
 		before, after runtime.MemStats
 	)
@@ -107,7 +107,7 @@ func main() {
 	}
 }
 
-func Score(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
+func Score(model *fslm.Hashed, sent []string) (total fslm.Weight, numOOVs int) {
 	p := model.Start()
 	for _, x := range sent {
 		var w fslm.Weight
@@ -128,7 +128,7 @@ func Score(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
 	return
 }
 
-func SilentScore(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
+func SilentScore(model *fslm.Hashed, sent []string) (total fslm.Weight, numOOVs int) {
 	p := model.Start()
 	for _, x := range sent {
 		var w fslm.Weight

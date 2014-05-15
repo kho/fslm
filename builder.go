@@ -7,10 +7,9 @@ import (
 	"io"
 )
 
-// Builder builds a Model from n-grams (e.g. estimated by SRILM). Must
-// be constrcuted using NewBuilder().
+// Builder builds a language model from n-grams (e.g. estimated by
+// SRILM). Must be constrcuted using NewBuilder().
 type Builder struct {
-	scale        float64
 	vocab        *word.Vocab
 	bos, eos     string
 	bosId, eosId word.Id
@@ -18,24 +17,14 @@ type Builder struct {
 	backoff      []StateWeight
 }
 
-// NewBuilder constrcuts a new Builder. scale is the initial
-// multiplier used to decide the number of buckets in final Model's
-// hash map; when <= 1, a default multiplier of 1.5 is used. Larger
-// multiplier generally speeds at final Model look up speed at the
-// cost of using more memory. vocab is the base vocabulary to use for
-// the resulting Model; it can be nil, in which case a default
-// vocabulary with [<s>, </s>] as the first two words is
+// NewBuilder constrcuts a new Builder. vocab is the base vocabulary
+// to use for the resulting model; it can be nil, in which case a
+// default vocabulary with [<s>, </s>] as the first two words is
 // created. Otherwise, bos and eos are used to query the sentence
 // boundary symbols from the vocab. Subsequent calls from Builder will
 // not modify outside vocab (i.e. a copy is made when vocab != nil).
-func NewBuilder(scale float64, vocab *word.Vocab, bos, eos string) *Builder {
+func NewBuilder(vocab *word.Vocab, bos, eos string) *Builder {
 	var builder Builder
-
-	if scale <= 1 {
-		builder.scale = 1.5
-	} else {
-		builder.scale = scale
-	}
 
 	if vocab == nil {
 		vocab = word.NewVocab([]string{"<s>", "</s>"})
@@ -153,10 +142,15 @@ func (b *Builder) findState(p StateId, ws []string) StateId {
 	return p
 }
 
-// Dump creates the result Model and invalidates the internal data of
-// b. Subsequent calls to b.AddNgram() will have undefined behavior
-// (probably panic and will definitely not give you correct Model).
-func (b *Builder) Dump() *Model {
+// DumpHashed creates the result Hashed model and invalidates the
+// internal data of b. Subsequent calls to b.AddNgram() will have
+// undefined behavior (probably panic and will definitely not give you
+// a correct model). scale is the initial multiplier used to decide
+// the number of buckets in final model's hash map; when <= 1, a
+// default multiplier of 1.5 is used. Larger multiplier generally
+// speeds up the final model's look up at the cost of using more
+// memory.
+func (b *Builder) DumpHashed(scale float64) *Hashed {
 	// For safety.
 	if _STATE_EMPTY != 0 {
 		glog.Fatalf("this assumes _STATE_EMPTY == 0; got %d", _STATE_EMPTY)
@@ -165,7 +159,7 @@ func (b *Builder) Dump() *Model {
 		glog.Fatalf("this assumes _STATE_START == 1; got %d", _STATE_START)
 	}
 	b.link()
-	return b.pruneMove()
+	return b.pruneMove(scale)
 }
 
 // link links each state p to the first state q with at least one
@@ -229,14 +223,19 @@ func (b *Builder) linkTransition(p StateId, x word.Id, q StateId) (StateId, Weig
 }
 
 // pruneMove prunes the state space for immediately backing-off states
-// and moves the contents to a real Model.
-func (b *Builder) pruneMove() *Model {
+// and moves the contents to a real model.
+func (b *Builder) pruneMove(scale float64) *Hashed {
+	if scale <= 1 {
+		scale = 1.5
+	} else {
+		scale = scale
+	}
 	if glog.V(1) {
 		glog.Infof("before pruning: %d states", len(b.backoff))
 	}
-	var m Model
-	m.Vocab, b.vocab = b.vocab, nil // Steal!
-	m.BOS, m.EOS, m.BOSId, m.EOSId = b.bos, b.eos, b.bosId, b.eosId
+	var m Hashed
+	m.vocab, b.vocab = b.vocab, nil // Steal!
+	m.bos, m.eos, m.bosId, m.eosId = b.bos, b.eos, b.bosId, b.eosId
 	// Compute mapping from old StateId to pruned StateId.
 	oldToNew := make([]StateId, len(b.backoff))
 	// _STATE_EMPTY and _STATE_START must be unchanged.
@@ -264,7 +263,7 @@ func (b *Builder) pruneMove() *Model {
 			// Possible only for _STATE_START.
 			next = newXqwMap(0, 0)
 		}
-		next.Resize(int(float64(next.Size()) * b.scale))
+		next.Resize(int(float64(next.Size()) * scale))
 		b.transitions[o] = nil
 		// Walk over the buckets. If it holds an edge, pre-walk to the
 		// proper destination state. If it does not hold an edge, set it

@@ -14,16 +14,16 @@ import (
 	"unsafe"
 )
 
-// Model is a finite-state representation of a n-gram language
-// model. A Model is usually loaded from file or constructed with a
-// Builder.
-type Model struct {
+// Hashed is a finite-state representation of a n-gram language model
+// using hash tables. A Hashed model is usually loaded from file or
+// constructed with a Builder.
+type Hashed struct {
 	// The vocabulary of the model. Don't modify this. If you need to
 	// have a vocab based on this, make a copy using Vocab.Copy().
-	Vocab *word.Vocab
+	vocab *word.Vocab
 	// Sentence boundary symbols.
-	BOS, EOS     string
-	BOSId, EOSId word.Id
+	bos, eos     string
+	bosId, eosId word.Id
 	// Buckets per state for out-going lexical transitions.
 	// There are three kinds of transitions:
 	//
@@ -36,40 +36,17 @@ type Model struct {
 	// (2) A final transition that consumes </s>. This gives the final
 	// weight but always leads to an invalid state.
 	//
-	// (3) Buckets with invalid keys (WORD_NIL) are all filled with
+	// (3) Buckets with invalid keys (word.NIL) are all filled with
 	// back-off transitions so that we know the back-off transition
 	// immediately when the key cannot be found.
 	transitions []xqwBuckets
 }
 
-// Size returns the size of the model in several aspects. This needs
-// to iterate over the entire model so it is quite slow. The result
-// will not change so if there is need to use them multiple times,
-// cache them.
-func (m *Model) Size() (numStates, numTransitions, vocabSize int) {
-	numStates = len(m.transitions)
-	for _, i := range m.transitions {
-		numTransitions += i.Size()
-	}
-	vocabSize = int(m.Vocab.Bound())
-	return
-}
-
-// Start returns the start state, i.e. the state with context <s>. The
-// user should never explicitly query <s>, which has undefined
-// behavior (see NextI).
-func (m *Model) Start() StateId {
+func (m *Hashed) Start() StateId {
 	return _STATE_START
 }
 
-// NextI finds out the next state to go from p consuming i. i can not
-// be BOSId, EOSId, in which case the result is undefined, but can be
-// WORD_NIL. Any i that is not part of m.Vocab is treated as OOV. The
-// returned weight w is WEIGHT_LOG0 if and only if unigram i is an OOV
-// (note: although rare, it is possible to have "<s> x" but not "x" in
-// the LM, in which case "x" is also considered an OOV when not
-// occuring as the first token of a sentence).
-func (m *Model) NextI(p StateId, i word.Id) (q StateId, w Weight) {
+func (m *Hashed) NextI(p StateId, i word.Id) (q StateId, w Weight) {
 	// Try backing off until we find the n-gram or hit empty state.
 	next := m.transitions[p].FindEntry(i)
 	for next.Key == word.NIL && p != _STATE_EMPTY {
@@ -87,24 +64,16 @@ func (m *Model) NextI(p StateId, i word.Id) (q StateId, w Weight) {
 	return
 }
 
-// NextS is similar to NextI. s can be anything but <s> or </s>, in
-// which case the result is undefined.
-func (m *Model) NextS(p StateId, s string) (q StateId, w Weight) {
-	return m.NextI(p, m.Vocab.IdOf(s))
+func (m *Hashed) NextS(p StateId, s string) (q StateId, w Weight) {
+	return m.NextI(p, m.vocab.IdOf(s))
 }
 
-// Final returns the final weight of "consuming" </s> from p. A
-// sentence query should finish with this to properly score the
-// *whole* sentence.
-func (m *Model) Final(p StateId) Weight {
-	_, w := m.NextI(p, m.EOSId)
+func (m *Hashed) Final(p StateId) Weight {
+	_, w := m.NextI(p, m.eosId)
 	return w
 }
 
-// BackOff returns the back off state and weight of p. The back off
-// state of the empty context is STATE_NIL and its weight is
-// arbitrary.
-func (m *Model) BackOff(p StateId) (StateId, Weight) {
+func (m *Hashed) BackOff(p StateId) (StateId, Weight) {
 	if p == _STATE_EMPTY {
 		return STATE_NIL, 0
 	}
@@ -112,16 +81,35 @@ func (m *Model) BackOff(p StateId) (StateId, Weight) {
 	return backoff.State, backoff.Weight
 }
 
+func (m *Hashed) Vocab() (*word.Vocab, string, string, word.Id, word.Id) {
+	return m.vocab, m.bos, m.eos, m.bosId, m.eosId
+}
+
+func (m *Hashed) NumStates() int {
+	return len(m.transitions)
+}
+
+func (m *Hashed) Transitions(p StateId) chan WordStateWeight {
+	ch := make(chan WordStateWeight)
+	go func() {
+		for i := range m.transitions[p].Range() {
+			ch <- WordStateWeight{i.Key, i.Value.State, i.Value.Weight}
+		}
+		close(ch)
+	}()
+	return ch
+}
+
 // Graphviz prints out the finite-state topology of the model that can
 // be visualized with Graphviz. Mostly for debugging; could be quite
 // slow.
-func (m *Model) Graphviz(w io.Writer) {
+func (m *Hashed) Graphviz(w io.Writer) {
 	fmt.Fprintln(w, "digraph {")
 	fmt.Fprintln(w, "  // lexical transitions")
 	for p, es := range m.transitions {
 		for e := range es.Range() {
 			x, qw := e.Key, e.Value
-			fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, qw.State, fmt.Sprintf("%s : %g", m.Vocab.StringOf(word.Id(x)), qw.Weight))
+			fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, qw.State, fmt.Sprintf("%s : %g", m.vocab.StringOf(word.Id(x)), qw.Weight))
 		}
 	}
 	fmt.Fprintln(w, "  // back-off transitions")
@@ -136,16 +124,16 @@ func (m *Model) Graphviz(w io.Writer) {
 
 // MarshalBinary uses gob, which is unfortunately very slow even for a
 // modestly sized model.
-func (m *Model) MarshalBinary() (data []byte, err error) {
+func (m *Hashed) MarshalBinary() (data []byte, err error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	if err = enc.Encode(m.Vocab); err != nil {
+	if err = enc.Encode(m.vocab); err != nil {
 		return
 	}
-	if err = enc.Encode(m.BOS); err != nil {
+	if err = enc.Encode(m.bos); err != nil {
 		return
 	}
-	if err = enc.Encode(m.EOS); err != nil {
+	if err = enc.Encode(m.eos); err != nil {
 		return
 	}
 	if err = enc.Encode(m.transitions); err != nil {
@@ -156,41 +144,41 @@ func (m *Model) MarshalBinary() (data []byte, err error) {
 
 // UnmarshalBinary uses gob, which is unfortunately very slow even for
 // a modestly sized model.
-func (m *Model) UnmarshalBinary(data []byte) (err error) {
+func (m *Hashed) UnmarshalBinary(data []byte) (err error) {
 	dec := gob.NewDecoder(bytes.NewReader(data))
-	if err = dec.Decode(&m.Vocab); err != nil {
+	if err = dec.Decode(&m.vocab); err != nil {
 		return
 	}
-	if err = dec.Decode(&m.BOS); err != nil {
+	if err = dec.Decode(&m.bos); err != nil {
 		return
 	}
-	if err = dec.Decode(&m.EOS); err != nil {
+	if err = dec.Decode(&m.eos); err != nil {
 		return
 	}
 	if err = dec.Decode(&m.transitions); err != nil {
 		return
 	}
-	if m.BOSId = m.Vocab.IdOf(m.BOS); m.BOSId == word.NIL {
-		return errors.New(m.BOS + " not in vocabulary")
+	if m.bosId = m.vocab.IdOf(m.bos); m.bosId == word.NIL {
+		return errors.New(m.bos + " not in vocabulary")
 	}
-	if m.EOSId = m.Vocab.IdOf(m.EOS); m.EOSId == word.NIL {
-		return errors.New(m.EOS + " not in vocabulary")
+	if m.eosId = m.vocab.IdOf(m.eos); m.eosId == word.NIL {
+		return errors.New(m.eos + " not in vocabulary")
 	}
 	return nil
 }
 
-const modelMagic = "#fslm.hash"
+const hashedMagic = "#fslm.hash"
 
-func (m *Model) header() (header []byte, err error) {
+func (m *Hashed) header() (header []byte, err error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	if err = enc.Encode(m.Vocab); err != nil {
+	if err = enc.Encode(m.vocab); err != nil {
 		return
 	}
-	if err = enc.Encode(m.BOS); err != nil {
+	if err = enc.Encode(m.bos); err != nil {
 		return
 	}
-	if err = enc.Encode(m.EOS); err != nil {
+	if err = enc.Encode(m.eos); err != nil {
 		return
 	}
 	numBuckets := make([]int, len(m.transitions))
@@ -204,23 +192,23 @@ func (m *Model) header() (header []byte, err error) {
 	return
 }
 
-func (m *Model) parseHeader(header []byte) (numBuckets []int, err error) {
+func (m *Hashed) parseHeader(header []byte) (numBuckets []int, err error) {
 	dec := gob.NewDecoder(bytes.NewReader(header))
-	if err = dec.Decode(&m.Vocab); err != nil {
+	if err = dec.Decode(&m.vocab); err != nil {
 		return
 	}
-	if err = dec.Decode(&m.BOS); err != nil {
+	if err = dec.Decode(&m.bos); err != nil {
 		return
 	}
-	if err = dec.Decode(&m.EOS); err != nil {
+	if err = dec.Decode(&m.eos); err != nil {
 		return
 	}
-	if m.BOSId = m.Vocab.IdOf(m.BOS); m.BOSId == word.NIL {
-		err = errors.New(m.BOS + " not in vocabulary")
+	if m.bosId = m.vocab.IdOf(m.bos); m.bosId == word.NIL {
+		err = errors.New(m.bos + " not in vocabulary")
 		return
 	}
-	if m.EOSId = m.Vocab.IdOf(m.EOS); m.EOSId == word.NIL {
-		err = errors.New(m.EOS + " not in vocabulary")
+	if m.eosId = m.vocab.IdOf(m.eos); m.eosId == word.NIL {
+		err = errors.New(m.eos + " not in vocabulary")
 		return
 	}
 	if err = dec.Decode(&numBuckets); err != nil {
@@ -229,13 +217,13 @@ func (m *Model) parseHeader(header []byte) (numBuckets []int, err error) {
 	return
 }
 
-func (m *Model) WriteBinary(path string) (err error) {
+func (m *Hashed) WriteBinary(path string) (err error) {
 	w, err := os.Create(path)
 	if err != nil {
 		return
 	}
 	defer w.Close()
-	if _, err = w.Write([]byte(modelMagic)); err != nil {
+	if _, err = w.Write([]byte(hashedMagic)); err != nil {
 		return
 	}
 	// Header: binary.MaxVarintLen64 bytes of header length and then
@@ -278,11 +266,11 @@ func (m *Model) WriteBinary(path string) (err error) {
 	return nil
 }
 
-func (m *Model) unsafeParseBinary(raw []byte) error {
-	if string(raw[:len(modelMagic)]) != modelMagic {
+func (m *Hashed) unsafeParseBinary(raw []byte) error {
+	if string(raw[:len(hashedMagic)]) != hashedMagic {
 		return errors.New("not a FSLM binary file")
 	}
-	read := uintptr(len(modelMagic))
+	read := uintptr(len(hashedMagic))
 	headerLen, varintErr := binary.Uvarint(raw[read : read+binary.MaxVarintLen64])
 	if varintErr <= 0 {
 		return errors.New("error reading header size")
@@ -346,12 +334,12 @@ func (m *MappedFile) Close() error {
 	return err2
 }
 
-func FromBinary(path string) (*Model, *MappedFile, error) {
+func FromBinary(path string) (*Hashed, *MappedFile, error) {
 	m, err := OpenMappedFile(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	var model Model
+	var model Hashed
 	if err := model.unsafeParseBinary(m.data); err != nil {
 		return nil, nil, err
 	}

@@ -26,7 +26,7 @@ func FromGobFile(path string) (*Model, error) {
 
 func FromARPA(in io.Reader, scale float64) (*Model, error) {
 	builder := NewBuilder(scale, nil, "", "")
-	if err := stream.Run(stream.EnumRead(in, lineSplit), arpaTop{builder}); err != nil {
+	if err := stream.Run(stream.EnumRead(in, lineSplit), arpaTop(builder)); err != nil {
 		return nil, err
 	}
 	return builder.Dump(), nil

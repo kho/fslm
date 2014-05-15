@@ -3,10 +3,11 @@ package fslm
 import (
 	"bytes"
 	"encoding/gob"
+	"github.com/kho/word"
 )
 
 type xqwEntry struct {
-	Key   WordId
+	Key   word.Id
 	Value StateWeight
 }
 
@@ -39,13 +40,13 @@ func (m *xqwMap) Size() int {
 	return m.numEntries
 }
 
-func (m *xqwMap) Find(k WordId) *StateWeight {
+func (m *xqwMap) Find(k word.Id) *StateWeight {
 	return m.buckets.Find(k)
 }
 
-func (m *xqwMap) FindOrInsert(k WordId) *StateWeight {
+func (m *xqwMap) FindOrInsert(k word.Id) *StateWeight {
 	e := m.buckets.FindEntry(k)
-	if e.Key != WORD_NIL {
+	if e.Key != word.NIL {
 		return &e.Value
 	}
 	// Need to insert.
@@ -65,7 +66,7 @@ func (m *xqwMap) Resize(numBuckets int) {
 	buckets := xqwInitBuckets(numBuckets)
 	for _, e := range m.buckets {
 		k := e.Key
-		if !WordIdEqual(k, WORD_NIL) {
+		if !WordIdEqual(k, word.NIL) {
 			dst := buckets.nextAvailable(k)
 			*dst = e
 		}
@@ -116,14 +117,14 @@ type xqwBuckets []xqwEntry
 func xqwInitBuckets(n int) xqwBuckets {
 	s := make(xqwBuckets, n)
 	for i := range s {
-		s[i].Key = WORD_NIL
+		s[i].Key = word.NIL
 	}
 	return s
 }
 
 func (b xqwBuckets) Size() (n int) {
 	for _, e := range b {
-		if e.Key != WORD_NIL {
+		if e.Key != word.NIL {
 			n++
 		}
 	}
@@ -132,7 +133,7 @@ func (b xqwBuckets) Size() (n int) {
 
 // var numLookUps, numCollisions int
 
-func (b xqwBuckets) Find(k WordId) (v *StateWeight) {
+func (b xqwBuckets) Find(k word.Id) (v *StateWeight) {
 	// numLookUps++
 	i := b.start(k)
 	for {
@@ -142,7 +143,7 @@ func (b xqwBuckets) Find(k WordId) (v *StateWeight) {
 		if WordIdEqual(ki, k) {
 			return &ei.Value
 		}
-		if WordIdEqual(ki, WORD_NIL) {
+		if WordIdEqual(ki, word.NIL) {
 			return nil
 		}
 		// numCollisions++
@@ -153,12 +154,12 @@ func (b xqwBuckets) Find(k WordId) (v *StateWeight) {
 	}
 }
 
-func (b xqwBuckets) FindEntry(k WordId) *xqwEntry {
+func (b xqwBuckets) FindEntry(k word.Id) *xqwEntry {
 	i := b.start(k)
 	for {
 		ei := &b[i]
 		ki := ei.Key
-		if WordIdEqual(ki, k) || WordIdEqual(ki, WORD_NIL) {
+		if WordIdEqual(ki, k) || WordIdEqual(ki, word.NIL) {
 			return ei
 		}
 		i++
@@ -172,7 +173,7 @@ func (b xqwBuckets) Range() chan xqwEntry {
 	ch := make(chan xqwEntry)
 	go func() {
 		for _, e := range b {
-			if e.Key != WORD_NIL {
+			if e.Key != word.NIL {
 				ch <- e
 			}
 		}
@@ -181,15 +182,15 @@ func (b xqwBuckets) Range() chan xqwEntry {
 	return ch
 }
 
-func (b xqwBuckets) start(k WordId) int {
+func (b xqwBuckets) start(k word.Id) int {
 	return int(WordIdHash(k) % uint(len(b)))
 }
 
-func (b xqwBuckets) nextAvailable(k WordId) *xqwEntry {
+func (b xqwBuckets) nextAvailable(k word.Id) *xqwEntry {
 	i := b.start(k)
 	for {
 		ei := &b[i]
-		if WordIdEqual(ei.Key, WORD_NIL) {
+		if WordIdEqual(ei.Key, word.NIL) {
 			return ei
 		}
 		i++

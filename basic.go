@@ -8,13 +8,6 @@ import (
 	"strconv"
 )
 
-// WordId represents word identity.
-type WordId uint32
-
-const (
-	WORD_NIL WordId = ^WordId(0) // An invalid word.
-)
-
 // StateId represents a Model state.
 type StateId uint32
 

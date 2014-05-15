@@ -3,6 +3,7 @@ package fslm
 import (
 	"fmt"
 	"github.com/golang/glog"
+	"github.com/kho/word"
 	"io"
 )
 
@@ -10,9 +11,9 @@ import (
 // be constrcuted using NewBuilder().
 type Builder struct {
 	scale        float64
-	vocab        *Vocab
+	vocab        *word.Vocab
 	bos, eos     string
-	bosId, eosId WordId
+	bosId, eosId word.Id
 	transitions  []*xqwMap
 	backoff      []StateWeight
 }
@@ -27,7 +28,7 @@ type Builder struct {
 // created. Otherwise, bos and eos are used to query the sentence
 // boundary symbols from the vocab. Subsequent calls from Builder will
 // not modify outside vocab (i.e. a copy is made when vocab != nil).
-func NewBuilder(scale float64, vocab *Vocab, bos, eos string) *Builder {
+func NewBuilder(scale float64, vocab *word.Vocab, bos, eos string) *Builder {
 	var builder Builder
 
 	if scale <= 1 {
@@ -37,7 +38,7 @@ func NewBuilder(scale float64, vocab *Vocab, bos, eos string) *Builder {
 	}
 
 	if vocab == nil {
-		vocab = NewVocab([]string{"<s>", "</s>"})
+		vocab = word.NewVocab([]string{"<s>", "</s>"})
 		bos = "<s>"
 		eos = "</s>"
 	} else {
@@ -51,10 +52,10 @@ func NewBuilder(scale float64, vocab *Vocab, bos, eos string) *Builder {
 		glog.Fatalf("begin-of-sentence and end-of-sentence are the same word %q", bos)
 	}
 
-	if builder.bosId = vocab.IdOf(bos); builder.bosId == WORD_NIL {
+	if builder.bosId = vocab.IdOf(bos); builder.bosId == word.NIL {
 		glog.Fatalf("%q not in vocabulary", bos)
 	}
-	if builder.eosId = vocab.IdOf(eos); builder.eosId == WORD_NIL {
+	if builder.eosId = vocab.IdOf(eos); builder.eosId == word.NIL {
 		glog.Fatalf("%q not in vocabulary", eos)
 	}
 
@@ -121,7 +122,7 @@ func (b *Builder) newState() StateId {
 	return s
 }
 
-func (b *Builder) setTransition(p StateId, x WordId, q StateId, w Weight) {
+func (b *Builder) setTransition(p StateId, x word.Id, q StateId, w Weight) {
 	if b.transitions[p] == nil {
 		b.transitions[p] = newXqwMap(0, 0)
 	}
@@ -132,7 +133,7 @@ func (b *Builder) setBackOffWeight(p StateId, bow Weight) {
 	b.backoff[p].Weight = bow
 }
 
-func (b *Builder) findNextState(p StateId, x WordId) StateId {
+func (b *Builder) findNextState(p StateId, x word.Id) StateId {
 	if b.transitions[p] == nil {
 		b.transitions[p] = newXqwMap(0, 0)
 	}
@@ -183,7 +184,7 @@ func (b *Builder) link() {
 	for i, es := range b.transitions[_STATE_EMPTY+1:] {
 		if es != nil {
 			for xqw := range es.Range() {
-				p, x, q := StateId(i+1), WordId(xqw.Key), xqw.Value.State
+				p, x, q := StateId(i+1), word.Id(xqw.Key), xqw.Value.State
 				if q != STATE_NIL {
 					b.linkTransition(p, x, q)
 				}
@@ -196,7 +197,7 @@ func (b *Builder) link() {
 // at least one lexical transition. q must not be _STATE_EMPTY. This
 // function might change q's back-off weight when the final back-off
 // state is not q's immediately back-off.
-func (b *Builder) linkTransition(p StateId, x WordId, q StateId) (StateId, Weight) {
+func (b *Builder) linkTransition(p StateId, x word.Id, q StateId) (StateId, Weight) {
 	qBackOff := &b.backoff[q]
 	if qBackOff.State == STATE_NIL {
 		// Find the next back-off state.
@@ -274,7 +275,7 @@ func (b *Builder) pruneMove() *Model {
 		}
 		buckets := next.buckets
 		for j, xqw := range buckets {
-			if xqw.Key != WORD_NIL {
+			if xqw.Key != word.NIL {
 				q, w := xqw.Value.State, xqw.Value.Weight
 				if q != STATE_NIL {
 					oldQ := q
@@ -309,7 +310,7 @@ func (b *Builder) Graphviz(w io.Writer) {
 	for p, es := range b.transitions {
 		if es != nil {
 			for xqw := range es.Range() {
-				x, qw := WordId(xqw.Key), xqw.Value
+				x, qw := word.Id(xqw.Key), xqw.Value
 				fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, qw.State, fmt.Sprintf("%s : %g", b.vocab.StringOf(x), qw.Weight))
 			}
 		}

@@ -1,6 +1,10 @@
 package fslm
 
-func WordIdHash(k WordId) uint {
+import (
+	"github.com/kho/word"
+)
+
+func WordIdHash(k word.Id) uint {
 	// https://code.google.com/p/fast-hash
 	h := uint64(k)
 	h ^= h >> 23
@@ -9,6 +13,6 @@ func WordIdHash(k WordId) uint {
 	return uint(h)
 }
 
-func WordIdEqual(a, b WordId) bool {
+func WordIdEqual(a, b word.Id) bool {
 	return a == b
 }

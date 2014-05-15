@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"github.com/kho/word"
 	"io"
 	"os"
 	"reflect"
@@ -19,10 +20,10 @@ import (
 type Model struct {
 	// The vocabulary of the model. Don't modify this. If you need to
 	// have a vocab based on this, make a copy using Vocab.Copy().
-	Vocab *Vocab
+	Vocab *word.Vocab
 	// Sentence boundary symbols.
 	BOS, EOS     string
-	BOSId, EOSId WordId
+	BOSId, EOSId word.Id
 	// Buckets per state for out-going lexical transitions.
 	// There are three kinds of transitions:
 	//
@@ -68,15 +69,15 @@ func (m *Model) Start() StateId {
 // (note: although rare, it is possible to have "<s> x" but not "x" in
 // the LM, in which case "x" is also considered an OOV when not
 // occuring as the first token of a sentence).
-func (m *Model) NextI(p StateId, i WordId) (q StateId, w Weight) {
+func (m *Model) NextI(p StateId, i word.Id) (q StateId, w Weight) {
 	// Try backing off until we find the n-gram or hit empty state.
 	next := m.transitions[p].FindEntry(i)
-	for next.Key == WORD_NIL && p != _STATE_EMPTY {
+	for next.Key == word.NIL && p != _STATE_EMPTY {
 		p = next.Value.State
 		w += next.Value.Weight
 		next = m.transitions[p].FindEntry(i)
 	}
-	if next.Key != WORD_NIL {
+	if next.Key != word.NIL {
 		q = next.Value.State
 		w += next.Value.Weight
 	} else {
@@ -107,7 +108,7 @@ func (m *Model) BackOff(p StateId) (StateId, Weight) {
 	if p == _STATE_EMPTY {
 		return STATE_NIL, 0
 	}
-	backoff := m.transitions[p].FindEntry(WORD_NIL).Value
+	backoff := m.transitions[p].FindEntry(word.NIL).Value
 	return backoff.State, backoff.Weight
 }
 
@@ -120,12 +121,12 @@ func (m *Model) Graphviz(w io.Writer) {
 	for p, es := range m.transitions {
 		for e := range es.Range() {
 			x, qw := e.Key, e.Value
-			fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, qw.State, fmt.Sprintf("%s : %g", m.Vocab.StringOf(WordId(x)), qw.Weight))
+			fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, qw.State, fmt.Sprintf("%s : %g", m.Vocab.StringOf(word.Id(x)), qw.Weight))
 		}
 	}
 	fmt.Fprintln(w, "  // back-off transitions")
 	for p, es := range m.transitions {
-		e := es.FindEntry(WORD_NIL)
+		e := es.FindEntry(word.NIL)
 		fmt.Fprintf(w, "  %d -> %d [label=%q,style=dashed]\n", p, e.Value.State, fmt.Sprintf("%g", e.Value.Weight))
 	}
 	fmt.Fprintln(w, "}")
@@ -169,10 +170,10 @@ func (m *Model) UnmarshalBinary(data []byte) (err error) {
 	if err = dec.Decode(&m.transitions); err != nil {
 		return
 	}
-	if m.BOSId = m.Vocab.IdOf(m.BOS); m.BOSId == WORD_NIL {
+	if m.BOSId = m.Vocab.IdOf(m.BOS); m.BOSId == word.NIL {
 		return errors.New(m.BOS + " not in vocabulary")
 	}
-	if m.EOSId = m.Vocab.IdOf(m.EOS); m.EOSId == WORD_NIL {
+	if m.EOSId = m.Vocab.IdOf(m.EOS); m.EOSId == word.NIL {
 		return errors.New(m.EOS + " not in vocabulary")
 	}
 	return nil
@@ -214,11 +215,11 @@ func (m *Model) parseHeader(header []byte) (numBuckets []int, err error) {
 	if err = dec.Decode(&m.EOS); err != nil {
 		return
 	}
-	if m.BOSId = m.Vocab.IdOf(m.BOS); m.BOSId == WORD_NIL {
+	if m.BOSId = m.Vocab.IdOf(m.BOS); m.BOSId == word.NIL {
 		err = errors.New(m.BOS + " not in vocabulary")
 		return
 	}
-	if m.EOSId = m.Vocab.IdOf(m.EOS); m.EOSId == WORD_NIL {
+	if m.EOSId = m.Vocab.IdOf(m.EOS); m.EOSId == word.NIL {
 		err = errors.New(m.EOS + " not in vocabulary")
 		return
 	}

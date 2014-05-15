@@ -70,8 +70,6 @@ func main() {
 	}
 	runtime.GC()
 	runtime.ReadMemStats(&after)
-	numStates, numTransitions, numWords := model.Size()
-	glog.Infof("loaded LM with %d states, %d transitions, and %d words", numStates, numTransitions, numWords)
 	glog.Infof("LM memory usage: %.2fMB", float64(after.Alloc-before.Alloc)/float64(1<<20))
 	in := bufio.NewScanner(os.Stdin)
 

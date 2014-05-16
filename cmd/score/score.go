@@ -62,7 +62,7 @@ func main() {
 
 	var (
 		corpus                      [][]word.Id
-		score                       fslm.Weight
+		score                       float64
 		numWords, numSents, numOOVs int
 	)
 
@@ -102,7 +102,7 @@ func LoadCorpus(r io.Reader, modelI interface{}) (sents [][]word.Id) {
 	return
 }
 
-func ScoreCorpus(kind int, modelI interface{}, corpus [][]word.Id) (score fslm.Weight, numOOVs int) {
+func ScoreCorpus(kind int, modelI interface{}, corpus [][]word.Id) (score float64, numOOVs int) {
 	if glog.V(1) {
 		return VerboseScoreCorpus(modelI.(fslm.Model), corpus)
 	} else {
@@ -116,7 +116,7 @@ func ScoreCorpus(kind int, modelI interface{}, corpus [][]word.Id) (score fslm.W
 	return
 }
 
-func VerboseScoreCorpus(model fslm.Model, corpus [][]word.Id) (total fslm.Weight, numOOVs int) {
+func VerboseScoreCorpus(model fslm.Model, corpus [][]word.Id) (total float64, numOOVs int) {
 	for _, sent := range corpus {
 		p := model.Start()
 		for _, x := range sent {
@@ -129,17 +129,17 @@ func VerboseScoreCorpus(model fslm.Model, corpus [][]word.Id) (total fslm.Weight
 			} else {
 				fmt.Printf("%q", x)
 			}
-			total += w
+			total += float64(w)
 			fmt.Printf("\t%g\t%g\n", w, total)
 		}
 		w := model.Final(p)
-		total += w
+		total += float64(w)
 		fmt.Printf("</s>\t%g\t%g\n\n", w, total)
 	}
 	return
 }
 
-func SilentScoreCorpusHashed(model *fslm.Hashed, corpus [][]word.Id) (total fslm.Weight, numOOVs int) {
+func SilentScoreCorpusHashed(model *fslm.Hashed, corpus [][]word.Id) (total float64, numOOVs int) {
 	for _, sent := range corpus {
 		p := model.Start()
 		for _, x := range sent {
@@ -149,15 +149,15 @@ func SilentScoreCorpusHashed(model *fslm.Hashed, corpus [][]word.Id) (total fslm
 				w = unkScore
 				numOOVs++
 			}
-			total += w
+			total += float64(w)
 		}
 		w := model.Final(p)
-		total += w
+		total += float64(w)
 	}
 	return
 }
 
-func SilentScoreCorpusSorted(model *fslm.Sorted, corpus [][]word.Id) (total fslm.Weight, numOOVs int) {
+func SilentScoreCorpusSorted(model *fslm.Sorted, corpus [][]word.Id) (total float64, numOOVs int) {
 	for _, sent := range corpus {
 		p := model.Start()
 		for _, x := range sent {
@@ -167,10 +167,10 @@ func SilentScoreCorpusSorted(model *fslm.Sorted, corpus [][]word.Id) (total fslm
 				w = unkScore
 				numOOVs++
 			}
-			total += w
+			total += float64(w)
 		}
 		w := model.Final(p)
-		total += w
+		total += float64(w)
 	}
 	return
 }

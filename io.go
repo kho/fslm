@@ -10,21 +10,21 @@ import (
 	"syscall"
 )
 
-func FromARPA(in io.Reader, scale float64) (*Hashed, error) {
+func FromARPA(in io.Reader) (*Builder, error) {
 	builder := NewBuilder(nil, "", "")
 	if err := stream.Run(stream.EnumRead(in, lineSplit), arpaTop(builder)); err != nil {
 		return nil, err
 	}
-	return builder.DumpHashed(scale), nil
+	return builder, nil
 }
 
-func FromARPAFile(path string, scale float64) (*Hashed, error) {
+func FromARPAFile(path string) (*Builder, error) {
 	in, err := easy.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer in.Close()
-	return FromARPA(in, scale)
+	return FromARPA(in)
 }
 
 type MappedFile struct {

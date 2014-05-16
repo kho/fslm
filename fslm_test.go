@@ -123,7 +123,7 @@ func hashedTest(lm []ngram, sents [][]token, t *testing.T) {
 	model := builder.DumpHashed(0)
 
 	buf.WriteString("model LM:\n")
-	model.Graphviz(&buf)
+	Graphviz(model, &buf)
 	t.Log(buf.String())
 
 	if err := checkModel(model); err != nil {

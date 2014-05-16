@@ -4,7 +4,9 @@ package fslm
 
 import (
 	"flag"
+	"fmt"
 	"github.com/kho/word"
+	"io"
 	"math"
 	"strconv"
 )
@@ -100,4 +102,26 @@ type IterableModel interface {
 	// state of the empty context is STATE_NIL and its weight is
 	// arbitrary.
 	BackOff(p StateId) (q StateId, w Weight)
+}
+
+// Graphviz prints out the finite-state topology of the model that can
+// be visualized with Graphviz. Mostly for debugging; could be quite
+// slow.
+func Graphviz(m IterableModel, w io.Writer) {
+	vocab, _, _, _, _ := m.Vocab()
+	fmt.Fprintln(w, "digraph {")
+	fmt.Fprintln(w, "  // lexical transitions")
+	for i := 0; i < m.NumStates(); i++ {
+		p := StateId(i)
+		for xqw := range m.Transitions(p) {
+			x, q, ww := xqw.Word, xqw.State, xqw.Weight
+			fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, q, fmt.Sprintf("%s : %g", vocab.StringOf(x), ww))
+		}
+	}
+	fmt.Fprintln(w, "  // back-off transitions")
+	for i := 0; i < m.NumStates(); i++ {
+		q, ww := m.BackOff(StateId(i))
+		fmt.Fprintf(w, "  %d -> %d [label=%q,style=dashed]\n", i, q, fmt.Sprintf("%g", ww))
+	}
+	fmt.Fprintln(w, "}")
 }

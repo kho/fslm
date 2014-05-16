@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/kho/word"
-	"io"
 	"os"
 	"reflect"
 	"syscall"
@@ -99,28 +98,6 @@ func (m *Hashed) Transitions(p StateId) chan WordStateWeight {
 	}()
 	return ch
 }
-
-// Graphviz prints out the finite-state topology of the model that can
-// be visualized with Graphviz. Mostly for debugging; could be quite
-// slow.
-func (m *Hashed) Graphviz(w io.Writer) {
-	fmt.Fprintln(w, "digraph {")
-	fmt.Fprintln(w, "  // lexical transitions")
-	for p, es := range m.transitions {
-		for e := range es.Range() {
-			x, qw := e.Key, e.Value
-			fmt.Fprintf(w, "  %d -> %d [label=%q]\n", p, qw.State, fmt.Sprintf("%s : %g", m.vocab.StringOf(word.Id(x)), qw.Weight))
-		}
-	}
-	fmt.Fprintln(w, "  // back-off transitions")
-	for p, es := range m.transitions {
-		e := es.FindEntry(word.NIL)
-		fmt.Fprintf(w, "  %d -> %d [label=%q,style=dashed]\n", p, e.Value.State, fmt.Sprintf("%g", e.Value.Weight))
-	}
-	fmt.Fprintln(w, "}")
-}
-
-// TODO: use mmap for disk IO once we have our own hashmap.
 
 // MarshalBinary uses gob, which is unfortunately very slow even for a
 // modestly sized model.

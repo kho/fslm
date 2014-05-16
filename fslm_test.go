@@ -1,9 +1,8 @@
 package fslm
 
-// Tests for both Hashed and Builder.
+// Common routines for testing a language model.
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -92,56 +91,7 @@ var trickyBackOffSents = [][]token{
 	{{"a", -1}, {"b", 0}, {"c", 0}, {"e", -4}, {"</s>", 1 + 0.1}},
 }
 
-func TestHashedSimple(t *testing.T) {
-	hashedTest(simpleTrigramLM, simpleTrigramSents, t)
-}
-
-func TestHashedSparse(t *testing.T) {
-	hashedTest(sparseFivegramLM, sparseFivegramSents, t)
-}
-
-func TestHashedSparser(t *testing.T) {
-	hashedTest(sparserFivegramLM, sparserFivegramSents, t)
-}
-
-func TestHashedTrickyBackOff(t *testing.T) {
-	hashedTest(trickyBackOffLM, trickyBackOffSents, t)
-}
-
 const floatTol = 1e-7
-
-func hashedTest(lm []ngram, sents [][]token, t *testing.T) {
-	builder := NewBuilder(nil, "", "")
-	for _, i := range lm {
-		c, x, w, b := i.Params()
-		builder.AddNgram(c, x, w, b)
-	}
-
-	var buf bytes.Buffer
-	buf.WriteString("builder LM:\n")
-	builder.Graphviz(&buf)
-	model := builder.DumpHashed(0)
-
-	buf.WriteString("model LM:\n")
-	Graphviz(model, &buf)
-	t.Log(buf.String())
-
-	if err := checkModel(model); err != nil {
-		t.Errorf("check model failed with error %v", err)
-	}
-
-	sentTest(model, sents, t)
-
-	lmBytes, err := model.MarshalBinary()
-	if err != nil {
-		t.Fatal("error in MarshalBinary(): ", err)
-	}
-	var model2 Hashed
-	if err := model2.UnmarshalBinary(lmBytes); err != nil {
-		t.Fatal("error in UnmarshalBinary(): ", err)
-	}
-	sentTest(&model2, sents, t)
-}
 
 func sentTest(model Model, sents [][]token, t *testing.T) {
 	for _, i := range sents {
@@ -170,19 +120,6 @@ func sentTest(model Model, sents [][]token, t *testing.T) {
 func checkModel(m IterableModel) error {
 	// All states should be reachable from _STATE_START.
 	uf := newUnionFind(m.NumStates())
-	// for i, es := range m.transitions {
-	// 	backoff, _ := m.BackOff(StateId(i))
-	// 	if backoff != STATE_NIL {
-	// 		uf.Union(i, int(backoff))
-	// 	}
-	// 	for e := range es.Range() {
-	// 		p := StateId(i)
-	// 		qw := StateWeight(e.Value)
-	// 		if qw.State != STATE_NIL {
-	// 			uf.Union(int(p), int(qw.State))
-	// 		}
-	// 	}
-	// }
 	for i := 0; i < m.NumStates(); i++ {
 		p := StateId(i)
 		backoff, _ := m.BackOff(p)
@@ -228,23 +165,12 @@ func checkModel(m IterableModel) error {
 			internal[p] = true
 		}
 	}
-	// for i, es := range m.transitions {
-	// 	if es.Size() > 0 {
-	// 		internal[StateId(i)] = true
-	// 	}
-	// }
 	for i := int(_STATE_EMPTY + 1); i < m.NumStates(); i++ {
 		b, _ := m.BackOff(StateId(i))
 		if !internal[b] {
 			return errors.New("backing off to leaf state")
 		}
 	}
-	// for i := range m.transitions[_STATE_EMPTY+1:] {
-	// 	b, _ := m.BackOff(StateId(i + 1))
-	// 	if !internal[b] {
-	// 		return errors.New("backing off to leaf state")
-	// 	}
-	// }
 	delete(internal, _STATE_START)
 	if len(internal)+1 != m.NumStates() {
 		return errors.New("there are non-start leaf states")

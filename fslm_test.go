@@ -93,6 +93,15 @@ var trickyBackOffSents = [][]token{
 
 const floatTol = 1e-7
 
+func readyBuilder(lm []ngram) *Builder {
+	builder := NewBuilder(nil, "", "")
+	for _, i := range lm {
+		c, x, w, b := i.Params()
+		builder.AddNgram(c, x, w, b)
+	}
+	return builder
+}
+
 func sentTest(model Model, sents [][]token, t *testing.T) {
 	for _, i := range sents {
 		var (

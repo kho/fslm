@@ -125,3 +125,17 @@ func Graphviz(m IterableModel, w io.Writer) {
 	}
 	fmt.Fprintln(w, "}")
 }
+
+// A list of implemented models.
+const (
+	MODEL_HASHED = iota
+	MODEL_SORTED
+)
+
+// Magic words for binary formats. Must be exactly "#fslm." + x, where
+// x are 4 characters.
+const (
+	MAGIC_BYTES  = len("#fslm.XXXX")
+	MAGIC_HASHED = "#fslm.hash"
+	MAGIC_SORTED = "#fslm.sort"
+)

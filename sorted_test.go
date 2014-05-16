@@ -24,11 +24,7 @@ func TestSortedTrickyBackOff(t *testing.T) {
 }
 
 func sortedTest(lm []ngram, sents [][]token, t *testing.T) {
-	builder := NewBuilder(nil, "", "")
-	for _, i := range lm {
-		c, x, w, b := i.Params()
-		builder.AddNgram(c, x, w, b)
-	}
+	builder := readyBuilder(lm)
 
 	var buf bytes.Buffer
 	buf.WriteString("builder LM:\n")

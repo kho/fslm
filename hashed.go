@@ -9,7 +9,6 @@ import (
 	"github.com/kho/word"
 	"os"
 	"reflect"
-	"syscall"
 	"unsafe"
 )
 
@@ -99,8 +98,6 @@ func (m *Hashed) Transitions(p StateId) chan WordStateWeight {
 	return ch
 }
 
-const hashedMagic = "#fslm.hash"
-
 func (m *Hashed) header() (header []byte, err error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -155,7 +152,7 @@ func (m *Hashed) WriteBinary(path string) (err error) {
 		return
 	}
 	defer w.Close()
-	if _, err = w.Write([]byte(hashedMagic)); err != nil {
+	if _, err = w.Write([]byte(MAGIC_HASHED)); err != nil {
 		return
 	}
 	// Header: binary.MaxVarintLen64 bytes of header length and then
@@ -198,11 +195,11 @@ func (m *Hashed) WriteBinary(path string) (err error) {
 	return nil
 }
 
-func (m *Hashed) unsafeParseBinary(raw []byte) error {
-	if string(raw[:len(hashedMagic)]) != hashedMagic {
+func (m *Hashed) UnsafeParseBinary(raw []byte) error {
+	if len(raw) < len(MAGIC_HASHED) || string(raw[:len(MAGIC_HASHED)]) != MAGIC_HASHED {
 		return errors.New("not a FSLM binary file")
 	}
-	read := uintptr(len(hashedMagic))
+	read := uintptr(len(MAGIC_HASHED))
 	headerLen, varintErr := binary.Uvarint(raw[read : read+binary.MaxVarintLen64])
 	if varintErr <= 0 {
 		return errors.New("error reading header size")
@@ -233,47 +230,4 @@ func (m *Hashed) unsafeParseBinary(raw []byte) error {
 		low += n
 	}
 	return nil
-}
-
-type MappedFile struct {
-	file *os.File
-	data []byte
-}
-
-func OpenMappedFile(path string) (m *MappedFile, err error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	stat, err := f.Stat()
-	if err != nil {
-		return
-	}
-	data, err := syscall.Mmap(int(f.Fd()), 0, int(stat.Size()), syscall.PROT_READ, syscall.MAP_SHARED)
-	if err != nil {
-		return
-	}
-	m = &MappedFile{f, data}
-	return
-}
-
-func (m *MappedFile) Close() error {
-	err1 := syscall.Munmap(m.data)
-	err2 := m.file.Close()
-	if err1 != nil {
-		return err1
-	}
-	return err2
-}
-
-func FromBinary(path string) (*Hashed, *MappedFile, error) {
-	m, err := OpenMappedFile(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	var model Hashed
-	if err := model.unsafeParseBinary(m.data); err != nil {
-		return nil, nil, err
-	}
-	return &model, m, nil
 }

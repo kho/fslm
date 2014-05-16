@@ -5,6 +5,7 @@ import (
 	"github.com/golang/glog"
 	"github.com/kho/word"
 	"io"
+	"sort"
 )
 
 // Builder builds a language model from n-grams (e.g. estimated by
@@ -151,15 +152,19 @@ func (b *Builder) findState(p StateId, ws []string) StateId {
 // speeds up the final model's look up at the cost of using more
 // memory.
 func (b *Builder) DumpHashed(scale float64) *Hashed {
-	// For safety.
-	if _STATE_EMPTY != 0 {
-		glog.Fatalf("this assumes _STATE_EMPTY == 0; got %d", _STATE_EMPTY)
-	}
-	if _STATE_START != 1 {
-		glog.Fatalf("this assumes _STATE_START == 1; got %d", _STATE_START)
-	}
 	b.link()
-	return b.pruneMove(scale)
+	oldToNew, numStates := b.prune()
+	return b.moveHashed(oldToNew, numStates, scale)
+}
+
+// DumpSorted creates the result Sorted model and invalidates the
+// internal data of b. Subsequent calls to b.AddNgram() will have
+// undefined behavior (probably panic and will definitely not give you
+// a correct model).
+func (b *Builder) DumpSorted() *Sorted {
+	b.link()
+	oldToNew, numStates := b.prune()
+	return b.moveSorted(oldToNew, numStates)
 }
 
 // link links each state p to the first state q with at least one
@@ -222,22 +227,14 @@ func (b *Builder) linkTransition(p StateId, x word.Id, q StateId) (StateId, Weig
 	return qBackOff.State, qBackOff.Weight
 }
 
-// pruneMove prunes the state space for immediately backing-off states
-// and moves the contents to a real model.
-func (b *Builder) pruneMove(scale float64) *Hashed {
-	if scale <= 1 {
-		scale = 1.5
-	} else {
-		scale = scale
-	}
+// prune prunes the state space by removing immediately backing off
+// states. Returns a mapping from old StateId to pruned StateId (or
+// STATE_NIL if pruned) and the number of states after pruning.
+func (b *Builder) prune() (oldToNew []StateId, numStates int) {
 	if glog.V(1) {
 		glog.Infof("before pruning: %d states", len(b.backoff))
 	}
-	var m Hashed
-	m.vocab, b.vocab = b.vocab, nil // Steal!
-	m.bos, m.eos, m.bosId, m.eosId = b.bos, b.eos, b.bosId, b.eosId
-	// Compute mapping from old StateId to pruned StateId.
-	oldToNew := make([]StateId, len(b.backoff))
+	oldToNew = make([]StateId, len(b.backoff))
 	// _STATE_EMPTY and _STATE_START must be unchanged.
 	oldToNew[_STATE_EMPTY] = _STATE_EMPTY
 	oldToNew[_STATE_START] = _STATE_START
@@ -251,7 +248,24 @@ func (b *Builder) pruneMove(scale float64) *Hashed {
 			oldToNew[o] = STATE_NIL
 		}
 	}
-	m.transitions = make([]xqwBuckets, nextId)
+	numStates = int(nextId)
+	if glog.V(1) {
+		glog.Infof("after pruning: %d states", numStates)
+	}
+	return
+}
+
+// moveHashed moves the contents to a Hashed model.
+func (b *Builder) moveHashed(oldToNew []StateId, numStates int, scale float64) *Hashed {
+	if scale <= 1 {
+		scale = 1.5
+	} else {
+		scale = scale
+	}
+	var m Hashed
+	m.vocab, b.vocab = b.vocab, nil // Steal!
+	m.bos, m.eos, m.bosId, m.eosId = b.bos, b.eos, b.bosId, b.eosId
+	m.transitions = make([]xqwBuckets, numStates)
 	// Copy transitions and apply the mapping.
 	for o, n := range oldToNew {
 		if n == STATE_NIL {
@@ -296,9 +310,59 @@ func (b *Builder) pruneMove(scale float64) *Hashed {
 	// Free last two pieces of Builder data.
 	b.backoff = nil
 	b.transitions = nil
-	if glog.V(1) {
-		glog.Infof("after pruning: %d states", nextId)
+	return &m
+}
+
+// moveSorted moves the contents to a Sorted model.
+func (b *Builder) moveSorted(oldToNew []StateId, numStates int) *Sorted {
+	var m Sorted
+	m.vocab, b.vocab = b.vocab, nil // Steal!
+	m.bos, m.eos, m.bosId, m.eosId = b.bos, b.eos, b.bosId, b.eosId
+	m.transitions = make([][]WordStateWeight, numStates)
+	// Copy transitions and apply the mapping.
+	for o, n := range oldToNew {
+		if n == STATE_NIL {
+			continue
+		}
+		// Copy Builder's data.
+		var next []WordStateWeight
+		// Walk over the transitions, if necessary pre-walk to the proper
+		// destination state.
+		if b.transitions[o] == nil {
+			// Possible only for _STATE_START.
+			next = make([]WordStateWeight, 0, 1)
+		} else {
+			next = make([]WordStateWeight, 0, b.transitions[o].Size()+1)
+			for xqw := range b.transitions[o].Range() {
+				q, w := xqw.Value.State, xqw.Value.Weight
+				if q != STATE_NIL {
+					oldQ := q
+					q = oldToNew[oldQ]
+					if q == STATE_NIL {
+						s := &b.backoff[oldQ]
+						q = oldToNew[s.State]
+						w += s.Weight
+					}
+				}
+				xqw.Value = StateWeight{q, w}
+				next = append(next, WordStateWeight{xqw.Key, q, w})
+			}
+		}
+		// Append the back-off transition.
+		backoff := b.backoff[o]
+		if backoff.State != STATE_NIL {
+			backoff.State = oldToNew[backoff.State]
+		}
+		next = append(next, WordStateWeight{word.NIL, backoff.State, backoff.Weight})
+		// Done for this state.
+		sort.Sort(byWord(next))
+		m.transitions[n] = next
+		// Free up some memory.
+		b.transitions[o] = nil
 	}
+	// Free last two pieces of Builder data.
+	b.backoff = nil
+	b.transitions = nil
 	return &m
 }
 

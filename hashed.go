@@ -99,51 +99,6 @@ func (m *Hashed) Transitions(p StateId) chan WordStateWeight {
 	return ch
 }
 
-// MarshalBinary uses gob, which is unfortunately very slow even for a
-// modestly sized model.
-func (m *Hashed) MarshalBinary() (data []byte, err error) {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err = enc.Encode(m.vocab); err != nil {
-		return
-	}
-	if err = enc.Encode(m.bos); err != nil {
-		return
-	}
-	if err = enc.Encode(m.eos); err != nil {
-		return
-	}
-	if err = enc.Encode(m.transitions); err != nil {
-		return
-	}
-	return buf.Bytes(), nil
-}
-
-// UnmarshalBinary uses gob, which is unfortunately very slow even for
-// a modestly sized model.
-func (m *Hashed) UnmarshalBinary(data []byte) (err error) {
-	dec := gob.NewDecoder(bytes.NewReader(data))
-	if err = dec.Decode(&m.vocab); err != nil {
-		return
-	}
-	if err = dec.Decode(&m.bos); err != nil {
-		return
-	}
-	if err = dec.Decode(&m.eos); err != nil {
-		return
-	}
-	if err = dec.Decode(&m.transitions); err != nil {
-		return
-	}
-	if m.bosId = m.vocab.IdOf(m.bos); m.bosId == word.NIL {
-		return errors.New(m.bos + " not in vocabulary")
-	}
-	if m.eosId = m.vocab.IdOf(m.eos); m.eosId == word.NIL {
-		return errors.New(m.eos + " not in vocabulary")
-	}
-	return nil
-}
-
 const hashedMagic = "#fslm.hash"
 
 func (m *Hashed) header() (header []byte, err error) {

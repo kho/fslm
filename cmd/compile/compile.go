@@ -9,13 +9,18 @@ import (
 	"runtime/pprof"
 )
 
+type CanWriteBinary interface {
+	WriteBinary(string) error
+}
+
 func main() {
 	var args struct {
 		Out string `name:"out" usage:"output path"`
 	}
 	cpuprofile := flag.String("cpuprofile", "", "path to write CPU profile")
 	memprofile := flag.String("memprofile", "", "path to write memory profile")
-	scale := flag.Float64("fslm.scale", 1.5, "scale multiplier for deciding the hash table size")
+	format := easy.StringChoice("fslm.format", "hash", "output format", []string{"hash", "sort"})
+	scale := flag.Float64("fslm.scale", 1.5, "scale multiplier for deciding the hash table size; only active in hash format")
 	easy.ParseFlagsAndArgs(&args)
 
 	if *cpuprofile != "" {
@@ -35,10 +40,22 @@ func main() {
 		}()
 	}
 
-	model, err := fslm.FromARPA(os.Stdin, *scale)
+	builder, err := fslm.FromARPA(os.Stdin)
 	if err != nil {
 		glog.Fatal(err)
 	}
+
+	var model CanWriteBinary
+
+	switch *format {
+	case "hash":
+		model = builder.DumpHashed(*scale)
+	case "sort":
+		model = builder.DumpSorted()
+	default:
+		glog.Fatalf("unknown format %q", *format)
+	}
+
 	if err := model.WriteBinary(args.Out); err != nil {
 		glog.Fatal(err)
 	}

@@ -2,16 +2,19 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"github.com/golang/glog"
 	"github.com/kho/easy"
 	"github.com/kho/fslm"
+	"github.com/kho/word"
+	"io"
 	"math"
 	"os"
 	"runtime"
 	"runtime/pprof"
-	"strings"
+	"time"
 )
 
 var unkScore fslm.Weight
@@ -24,7 +27,6 @@ func main() {
 	var args struct {
 		Model string `name:"model" usage:"LM file"`
 	}
-	format := flag.String("format", "bin", "arpa or gob")
 	cpuprofile := flag.String("cpuprofile", "", "path to write CPU profile")
 	memprofile := flag.String("memprofile", "", "path to write memory profile")
 	easy.ParseFlagsAndArgs(&args)
@@ -46,58 +48,35 @@ func main() {
 		}()
 	}
 
-	var (
-		model         *fslm.Model
-		err           error
-		before, after runtime.MemStats
-	)
+	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	switch *format {
-	case "arpa":
-		model, err = fslm.FromARPAFile(args.Model, 0)
-	case "bin":
-		var mappedFile *fslm.MappedFile
-		model, mappedFile, err = fslm.FromBinary(args.Model)
-		defer mappedFile.Close()
-	case "gob":
-		model, err = fslm.FromGobFile(args.Model)
-	default:
-		glog.Fatalf("unknown format %q", format)
-	}
+	kind, modelI, file, err := fslm.FromBinary(args.Model)
 	if err != nil {
 		glog.Fatal("error in loading model: ", err)
 	}
+	defer file.Close()
 	runtime.GC()
 	runtime.ReadMemStats(&after)
-	numStates, numTransitions, numWords := model.Size()
-	glog.Infof("loaded LM with %d states, %d transitions, and %d words", numStates, numTransitions, numWords)
-	glog.Infof("LM memory usage: %.2fMB", float64(after.Alloc-before.Alloc)/float64(1<<20))
-	in := bufio.NewScanner(os.Stdin)
+	glog.Infof("LM memory overhead: %.2fMB", float64(after.Alloc-before.Alloc)/float64(1<<20))
 
-	score, numWords, numSents, numOOVs := fslm.Weight(0), 0, 0, 0
-	if glog.V(1) {
-		for in.Scan() {
-			sent := strings.Fields(in.Text())
-			s, o := Score(model, sent)
-			score += s
-			numWords += len(sent)
-			numSents++
-			numOOVs += o
-		}
-	} else {
-		for in.Scan() {
-			sent := strings.Fields(in.Text())
-			s, o := SilentScore(model, sent)
-			score += s
-			numWords += len(sent)
-			numSents++
-			numOOVs += o
-		}
+	var (
+		corpus                      [][]word.Id
+		score                       float64
+		numWords, numSents, numOOVs int
+	)
+
+	glog.Info("loading corpus took ", easy.Timed(func() { corpus = LoadCorpus(os.Stdin, modelI) }))
+
+	numSents = len(corpus)
+	for _, i := range corpus {
+		numWords += len(i)
 	}
-	if err := in.Err(); err != nil {
-		glog.Fatal(err)
-	}
+
+	elapsed := easy.Timed(func() {
+		score, numOOVs = ScoreCorpus(kind, modelI, corpus)
+	})
+	glog.Infof("scoring took %v; %g QPS", elapsed, float64(numSents+numWords)*float64(time.Second)/float64(elapsed))
 
 	if numWords > 0 {
 		fmt.Printf("%d sents, %d words, %d OOVs\n", numSents, numWords, numOOVs)
@@ -107,39 +86,91 @@ func main() {
 	}
 }
 
-func Score(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
-	p := model.Start()
-	for _, x := range sent {
-		var w fslm.Weight
-		p, w = model.NextS(p, x)
-		if w == fslm.WEIGHT_LOG0 {
-			w = unkScore
-			numOOVs++
-			fmt.Printf("<unk>")
-		} else {
-			fmt.Printf("%q", x)
+func LoadCorpus(r io.Reader, modelI interface{}) (sents [][]word.Id) {
+	in := bufio.NewScanner(r)
+	vocab, _, _, _, _ := modelI.(fslm.Model).Vocab()
+	for in.Scan() {
+		var sent []word.Id
+		for _, i := range bytes.Fields(in.Bytes()) {
+			sent = append(sent, vocab.IdOf(string(i)))
 		}
-		total += w
-		fmt.Printf("\t%g\t%g\n", w, total)
+		sents = append(sents, sent)
 	}
-	w := model.Final(p)
-	total += w
-	fmt.Printf("</s>\t%g\t%g\n\n", w, total)
+	if err := in.Err(); err != nil {
+		glog.Fatal("when loading corpus: ", err)
+	}
 	return
 }
 
-func SilentScore(model *fslm.Model, sent []string) (total fslm.Weight, numOOVs int) {
-	p := model.Start()
-	for _, x := range sent {
-		var w fslm.Weight
-		p, w = model.NextS(p, x)
-		if w == fslm.WEIGHT_LOG0 {
-			w = unkScore
-			numOOVs++
+func ScoreCorpus(kind int, modelI interface{}, corpus [][]word.Id) (score float64, numOOVs int) {
+	if glog.V(1) {
+		return VerboseScoreCorpus(modelI.(fslm.Model), corpus)
+	} else {
+		switch kind {
+		case fslm.MODEL_HASHED:
+			return SilentScoreCorpusHashed(modelI.(*fslm.Hashed), corpus)
+		case fslm.MODEL_SORTED:
+			return SilentScoreCorpusSorted(modelI.(*fslm.Sorted), corpus)
 		}
-		total += w
 	}
-	w := model.Final(p)
-	total += w
+	return
+}
+
+func VerboseScoreCorpus(model fslm.Model, corpus [][]word.Id) (total float64, numOOVs int) {
+	for _, sent := range corpus {
+		p := model.Start()
+		for _, x := range sent {
+			var w fslm.Weight
+			p, w = model.NextI(p, x)
+			if w == fslm.WEIGHT_LOG0 {
+				w = unkScore
+				numOOVs++
+				fmt.Printf("<unk>")
+			} else {
+				fmt.Printf("%q", x)
+			}
+			total += float64(w)
+			fmt.Printf("\t%g\t%g\n", w, total)
+		}
+		w := model.Final(p)
+		total += float64(w)
+		fmt.Printf("</s>\t%g\t%g\n\n", w, total)
+	}
+	return
+}
+
+func SilentScoreCorpusHashed(model *fslm.Hashed, corpus [][]word.Id) (total float64, numOOVs int) {
+	for _, sent := range corpus {
+		p := model.Start()
+		for _, x := range sent {
+			var w fslm.Weight
+			p, w = model.NextI(p, x)
+			if w == fslm.WEIGHT_LOG0 {
+				w = unkScore
+				numOOVs++
+			}
+			total += float64(w)
+		}
+		w := model.Final(p)
+		total += float64(w)
+	}
+	return
+}
+
+func SilentScoreCorpusSorted(model *fslm.Sorted, corpus [][]word.Id) (total float64, numOOVs int) {
+	for _, sent := range corpus {
+		p := model.Start()
+		for _, x := range sent {
+			var w fslm.Weight
+			p, w = model.NextI(p, x)
+			if w == fslm.WEIGHT_LOG0 {
+				w = unkScore
+				numOOVs++
+			}
+			total += float64(w)
+		}
+		w := model.Final(p)
+		total += float64(w)
+	}
 	return
 }

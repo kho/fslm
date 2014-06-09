@@ -1,9 +1,8 @@
 package fslm
 
-// Tests for both Model and Builder.
+// Common routines for testing a language model.
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -92,58 +91,18 @@ var trickyBackOffSents = [][]token{
 	{{"a", -1}, {"b", 0}, {"c", 0}, {"e", -4}, {"</s>", 1 + 0.1}},
 }
 
-func TestLMSimple(t *testing.T) {
-	lmTest(simpleTrigramLM, simpleTrigramSents, t)
-}
-
-func TestLMSparse(t *testing.T) {
-	lmTest(sparseFivegramLM, sparseFivegramSents, t)
-}
-
-func TestLMSparser(t *testing.T) {
-	lmTest(sparserFivegramLM, sparserFivegramSents, t)
-}
-
-func TestLMTrickyBackOff(t *testing.T) {
-	lmTest(trickyBackOffLM, trickyBackOffSents, t)
-}
-
 const floatTol = 1e-7
 
-func lmTest(lm []ngram, sents [][]token, t *testing.T) {
-	builder := NewBuilder(0, nil, "", "")
+func readyBuilder(lm []ngram) *Builder {
+	builder := NewBuilder(nil, "", "")
 	for _, i := range lm {
 		c, x, w, b := i.Params()
 		builder.AddNgram(c, x, w, b)
 	}
-
-	var buf bytes.Buffer
-	buf.WriteString("builder LM:\n")
-	builder.Graphviz(&buf)
-	model := builder.Dump()
-
-	buf.WriteString("model LM:\n")
-	model.Graphviz(&buf)
-	t.Log(buf.String())
-
-	if err := checkModel(model); err != nil {
-		t.Errorf("check model failed with error %v", err)
-	}
-
-	sentTest(model, sents, t)
-
-	lmBytes, err := model.MarshalBinary()
-	if err != nil {
-		t.Fatal("error in MarshalBinary(): ", err)
-	}
-	var model2 Model
-	if err := model2.UnmarshalBinary(lmBytes); err != nil {
-		t.Fatal("error in UnmarshalBinary(): ", err)
-	}
-	sentTest(&model2, sents, t)
+	return builder
 }
 
-func sentTest(model *Model, sents [][]token, t *testing.T) {
+func sentTest(model Model, sents [][]token, t *testing.T) {
 	for _, i := range sents {
 		var (
 			w0, w1 Weight
@@ -167,19 +126,18 @@ func sentTest(model *Model, sents [][]token, t *testing.T) {
 	}
 }
 
-func checkModel(m *Model) error {
+func checkModel(m IterableModel) error {
 	// All states should be reachable from _STATE_START.
-	uf := newUnionFind(len(m.transitions))
-	for i, es := range m.transitions {
-		backoff, _ := m.BackOff(StateId(i))
+	uf := newUnionFind(m.NumStates())
+	for i := 0; i < m.NumStates(); i++ {
+		p := StateId(i)
+		backoff, _ := m.BackOff(p)
 		if backoff != STATE_NIL {
 			uf.Union(i, int(backoff))
 		}
-		for e := range es.Range() {
-			p := StateId(i)
-			qw := StateWeight(e.Value)
-			if qw.State != STATE_NIL {
-				uf.Union(int(p), int(qw.State))
+		for xqw := range m.Transitions(p) {
+			if xqw.State != STATE_NIL {
+				uf.Union(int(p), int(xqw.State))
 			}
 		}
 	}
@@ -193,8 +151,8 @@ func checkModel(m *Model) error {
 		return errors.New("wrong back-off for _STATE_EMPTY")
 	}
 	// All other states eventually backs off to _STATE_EMPTY.
-	uf = newUnionFind(len(m.transitions))
-	for i := range m.transitions {
+	uf = newUnionFind(m.NumStates())
+	for i := 0; i < m.NumStates(); i++ {
 		if b, _ := m.BackOff(StateId(i)); b != STATE_NIL {
 			uf.Union(int(b), i)
 		}
@@ -206,19 +164,24 @@ func checkModel(m *Model) error {
 	}
 	// Every back-off state has at least one lexical transition.
 	internal := map[StateId]bool{}
-	for i, es := range m.transitions {
-		if es.Size() > 0 {
-			internal[StateId(i)] = true
+	for i := 0; i < m.NumStates(); i++ {
+		p := StateId(i)
+		n := 0
+		for _ = range m.Transitions(p) {
+			n++
+		}
+		if n > 0 {
+			internal[p] = true
 		}
 	}
-	for i := range m.transitions[_STATE_EMPTY+1:] {
-		b, _ := m.BackOff(StateId(i + 1))
+	for i := int(_STATE_EMPTY + 1); i < m.NumStates(); i++ {
+		b, _ := m.BackOff(StateId(i))
 		if !internal[b] {
 			return errors.New("backing off to leaf state")
 		}
 	}
 	delete(internal, _STATE_START)
-	if len(internal)+1 != len(m.transitions) {
+	if len(internal)+1 != m.NumStates() {
 		return errors.New("there are non-start leaf states")
 	}
 	return nil

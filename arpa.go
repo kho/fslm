@@ -13,12 +13,12 @@ import (
 // arpaTop builds a top-level iteratee for parsing a complete ARPA
 // file.
 func arpaTop(b *Builder) stream.Iteratee {
-	return stream.Seq{
+	return stream.Seq(
 		stream.Match(`\data\`),
 		skipNgramCounts{},
-		stream.Star{ngramSection{b}},
+		stream.Star(ngramSection{b}),
 		stream.Match(`\end\`),
-		stream.EOF}
+		stream.EOF)
 }
 
 // skipNgramCounts skips the n-gram-count section.

@@ -12,7 +12,7 @@ import (
 
 func FromARPA(in io.Reader) (*Builder, error) {
 	builder := NewBuilder(nil, "", "")
-	if err := stream.Run(stream.EnumRead(in, lineSplit), arpaTop(builder)); err != nil {
+	if err := stream.Run(stream.NewScanEnumeratorWith(in, lineSplit), arpaTop(builder)); err != nil {
 		return nil, err
 	}
 	return builder, nil

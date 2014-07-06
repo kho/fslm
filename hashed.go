@@ -2,10 +2,9 @@ package fslm
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/gob"
 	"errors"
-	"fmt"
+	"github.com/kho/byteblock"
 	"github.com/kho/word"
 	"os"
 	"reflect"
@@ -152,76 +151,82 @@ func (m *Hashed) WriteBinary(path string) (err error) {
 		return
 	}
 	defer w.Close()
-	if _, err = w.Write([]byte(MAGIC_HASHED)); err != nil {
+	bw := byteblock.NewByteBlockWriter(w)
+	if err = bw.WriteString(MAGIC_HASHED, 0); err != nil {
 		return
 	}
-	// Header: binary.MaxVarintLen64 bytes of header length and then
-	// header.
+	// Header
 	header, err := m.header()
 	if err != nil {
 		return
 	}
-	headerLenBytes := make([]byte, binary.MaxVarintLen64)
-	binary.PutUvarint(headerLenBytes, uint64(len(header)))
-	if _, err = w.Write(headerLenBytes); err != nil {
-		return
-	}
-	if _, err = w.Write(header); err != nil {
+	if err = bw.Write(header, 0); err != nil {
 		return
 	}
 	// Raw entries.
-	written, err := w.Seek(0, 1)
-	if err != nil {
+
+	// Go over the transitions to see how many entries there are in total.
+	numEntries := int64(0)
+	for _, i := range m.transitions {
+		numEntries += int64(len(i))
+	}
+	// Ask for a large new block and then incrementally write out the
+	// data.
+	align := int64(unsafe.Alignof(xqwEntry{}))
+	size := int64(unsafe.Sizeof(xqwEntry{}))
+	if err = bw.NewBlock(align, size*numEntries); err != nil {
 		return
 	}
-	// Paddings so that each entry is properly aligned.
-	align := unsafe.Alignof(xqwEntry{})
-	if _, err = w.Write(make([]byte, align-uintptr(written)%align)); err != nil {
-		return
-	}
-	// Actual entries.
-	size := unsafe.Sizeof(xqwEntry{})
 	for _, i := range m.transitions {
 		iHeader := (*reflect.SliceHeader)(unsafe.Pointer(&i))
 		var bytes []byte
 		bytesHeader := (*reflect.SliceHeader)(unsafe.Pointer(&bytes))
 		bytesHeader.Data = iHeader.Data
-		bytesHeader.Len = int(uintptr(iHeader.Len) * size)
+		bytesHeader.Len = int(int64(iHeader.Len) * size)
 		bytesHeader.Cap = bytesHeader.Len
-		if _, err = w.Write(bytes); err != nil {
+		if err = bw.Append(bytes); err != nil {
 			return
 		}
 	}
 	return nil
 }
 
+func IsHashedBinary(raw []byte) bool {
+	bs := byteblock.NewByteBlockSlicer(raw)
+	magic, err := bs.Slice()
+	return err == nil && string(magic) == MAGIC_HASHED
+}
+
 func (m *Hashed) UnsafeParseBinary(raw []byte) error {
-	if len(raw) < len(MAGIC_HASHED) || string(raw[:len(MAGIC_HASHED)]) != MAGIC_HASHED {
-		return errors.New("not a FSLM binary file")
-	}
-	read := uintptr(len(MAGIC_HASHED))
-	headerLen, varintErr := binary.Uvarint(raw[read : read+binary.MaxVarintLen64])
-	if varintErr <= 0 {
-		return errors.New("error reading header size")
-	}
-	read += binary.MaxVarintLen64
-	numBuckets, err := m.parseHeader(raw[read : read+uintptr(headerLen)])
+	bs := byteblock.NewByteBlockSlicer(raw)
+
+	magic, err := bs.Slice()
 	if err != nil {
 		return err
 	}
-	read += uintptr(headerLen)
-	align, size := unsafe.Alignof(xqwEntry{}), unsafe.Sizeof(xqwEntry{})
-	read += align - read%align
-	// The rest are actual entries.
-	if (uintptr(len(raw))-read)%size != 0 {
-		return errors.New(fmt.Sprintf("number of left-over bytes are not a multiple of %d", size))
+	if string(magic) != MAGIC_HASHED {
+		return errors.New("not a FSLM binary file")
 	}
-	entryBytes := raw[read:]
+
+	header, err := bs.Slice()
+	if err != nil {
+		return err
+	}
+
+	numBuckets, err := m.parseHeader(header)
+	if err != nil {
+		return err
+	}
+
+	entryBytes, err := bs.Slice()
+	if err != nil {
+		return err
+	}
 	var entrySlice []xqwEntry
 	entryBytesHeader := (*reflect.SliceHeader)(unsafe.Pointer(&entryBytes))
 	entrySliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&entrySlice))
 	entrySliceHeader.Data = entryBytesHeader.Data
-	entrySliceHeader.Len = entryBytesHeader.Len / int(size)
+	entrySliceHeader.Len = entryBytesHeader.Len / int(unsafe.Sizeof(xqwEntry{}))
 	entrySliceHeader.Cap = entrySliceHeader.Len
 	m.transitions = make([]xqwBuckets, len(numBuckets))
 	low := 0

@@ -2,7 +2,6 @@ package fslm
 
 import (
 	"errors"
-	"fmt"
 	"github.com/kho/easy"
 	"github.com/kho/stream"
 	"io"
@@ -63,23 +62,19 @@ func FromBinary(path string) (int, interface{}, *MappedFile, error) {
 	if err != nil {
 		return -1, nil, nil, err
 	}
-	if len(m.data) < MAGIC_BYTES || string(m.data[:6]) != "#fslm." {
-		return -1, nil, nil, errors.New("not a FSLM binary file")
-	}
-	switch string(m.data[:MAGIC_BYTES]) {
-	case MAGIC_HASHED:
+	if IsHashedBinary(m.data) {
 		var model Hashed
 		if err := model.UnsafeParseBinary(m.data); err != nil {
 			return -1, nil, nil, err
 		}
 		return MODEL_HASHED, &model, m, nil
-	case MAGIC_SORTED:
+	} else if IsSortedBinary(m.data) {
 		var model Sorted
 		if err := model.UnsafeParseBinary(m.data); err != nil {
 			return -1, nil, nil, err
 		}
 		return MODEL_SORTED, &model, m, nil
-	default:
-		return -1, nil, nil, errors.New(fmt.Sprintf("unknown FSLM format: %q", m.data[6:MAGIC_BYTES]))
+	} else {
+		return -1, nil, nil, errors.New("not an FSLM file")
 	}
 }

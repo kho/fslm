@@ -132,10 +132,8 @@ const (
 	MODEL_SORTED
 )
 
-// Magic words for binary formats. Must be exactly "#fslm." + x, where
-// x are 4 characters.
+// Magic words for binary formats.
 const (
-	MAGIC_BYTES  = len("#fslm.XXXX")
 	MAGIC_HASHED = "#fslm.hash"
 	MAGIC_SORTED = "#fslm.sort"
 )

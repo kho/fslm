@@ -3,6 +3,7 @@ package fslm
 import (
 	"bytes"
 	"encoding/gob"
+
 	"github.com/kho/word"
 )
 

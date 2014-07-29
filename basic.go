@@ -5,10 +5,11 @@ package fslm
 import (
 	"flag"
 	"fmt"
-	"github.com/kho/word"
 	"io"
 	"math"
 	"strconv"
+
+	"github.com/kho/word"
 )
 
 // StateId represents a language model state.

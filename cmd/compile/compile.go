@@ -2,11 +2,12 @@ package main
 
 import (
 	"flag"
+	"os"
+	"runtime/pprof"
+
 	"github.com/golang/glog"
 	"github.com/kho/easy"
 	"github.com/kho/fslm"
-	"os"
-	"runtime/pprof"
 )
 
 type CanWriteBinary interface {

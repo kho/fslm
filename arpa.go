@@ -5,9 +5,10 @@ package fslm
 import (
 	"bytes"
 	"fmt"
+	"strconv"
+
 	"github.com/golang/glog"
 	"github.com/kho/stream"
-	"strconv"
 )
 
 // arpaTop builds a top-level iteratee for parsing a complete ARPA

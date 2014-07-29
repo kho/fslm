@@ -2,10 +2,11 @@ package fslm
 
 import (
 	"fmt"
-	"github.com/golang/glog"
-	"github.com/kho/word"
 	"io"
 	"sort"
+
+	"github.com/golang/glog"
+	"github.com/kho/word"
 )
 
 // Builder builds a language model from n-grams (e.g. estimated by

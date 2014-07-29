@@ -5,16 +5,17 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/golang/glog"
-	"github.com/kho/easy"
-	"github.com/kho/fslm"
-	"github.com/kho/word"
 	"io"
 	"math"
 	"os"
 	"runtime"
 	"runtime/pprof"
 	"time"
+
+	"github.com/golang/glog"
+	"github.com/kho/easy"
+	"github.com/kho/fslm"
+	"github.com/kho/word"
 )
 
 var unkScore fslm.Weight

@@ -2,11 +2,12 @@ package fslm
 
 import (
 	"errors"
-	"github.com/kho/easy"
-	"github.com/kho/stream"
 	"io"
 	"os"
 	"syscall"
+
+	"github.com/kho/easy"
+	"github.com/kho/stream"
 )
 
 func FromARPA(in io.Reader) (*Builder, error) {

@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/gob"
 	"errors"
-	"github.com/kho/byteblock"
-	"github.com/kho/word"
 	"os"
 	"reflect"
 	"unsafe"
+
+	"github.com/kho/byteblock"
+	"github.com/kho/word"
 )
 
 type Sorted struct {

@@ -3,8 +3,9 @@ package fslm
 import (
 	"bytes"
 	"errors"
-	"github.com/kho/word"
 	"testing"
+
+	"github.com/kho/word"
 )
 
 func TestSortedSimple(t *testing.T) {

@@ -20,7 +20,7 @@ func main() {
 	}
 	cpuprofile := flag.String("cpuprofile", "", "path to write CPU profile")
 	memprofile := flag.String("memprofile", "", "path to write memory profile")
-	format := easy.StringChoice("fslm.format", "hash", "output format", []string{"hash", "sort"})
+	format := easy.StringChoice("fslm.format", []string{"hash", "sort"}, "output format")
 	scale := flag.Float64("fslm.scale", 1.5, "scale multiplier for deciding the hash table size; only active in hash format")
 	easy.ParseFlagsAndArgs(&args)
 
